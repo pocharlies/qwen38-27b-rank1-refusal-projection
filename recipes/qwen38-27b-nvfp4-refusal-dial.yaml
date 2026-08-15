@@ -1,8 +1,8 @@
 # sparkrun recipe — Qwen3.8-27B NVFP4 + MTP, with the refusal dial
 #
 #   sparkrun run qwen38-27b-nvfp4-refusal-dial.yaml
-#   curl -XPOST localhost:8000/admin/refusal_lambda -d '{"lambda": 1}'   # ablation on
-#   curl -XPOST localhost:8000/admin/refusal_lambda -d '{"lambda": 0}'   # off, bit-exact
+#   curl -XPOST localhost:8101/admin/refusal_lambda -d '{"lambda": 1}'   # ablation on
+#   curl -XPOST localhost:8101/admin/refusal_lambda -d '{"lambda": 0}'   # off, bit-exact
 #
 # Serves the STOCK unsloth NVFP4 checkpoint. The ablation is 2.6 MB of rank-1 refusal
 # directions applied at runtime, not baked weights — so there is no second checkpoint to
@@ -42,7 +42,14 @@ metadata:
   vram_gb: 32
 
 defaults:
-  port: 8000
+  # NOT 8000. Reported from a real machine: something else already held 8000, so the
+  # container could not bind, and the failure surfaced as an unrelated SIGKILL (exit 137)
+  # in pre_exec rather than "address in use" -- because sparkrun leaves the previous
+  # container RUNNING when it gives up (sys.exit(1) with no teardown), and cluster_id
+  # hashes served_model_name, so renaming the model starts a SECOND container instead of
+  # replacing the first. The orphan held both the port and ~23 GB of loaded weights.
+  # 8000/8080 are the two most squatted ports on any dev box; 8101 is not.
+  port: 8101
   host: 0.0.0.0
   tensor_parallel: 1
   served_model_name: qwen38-27b
@@ -60,7 +67,7 @@ defaults:
   # whole thing is put back verbatim, and vLLM gets literal `{spec_tokens}`:
   #   JSONDecodeError: Expecting property name enclosed in double quotes (char 42)
   # vLLM then exits before binding the port and sparkrun reports only
-  #   "Error: Server health check never passed at http://127.0.0.1:8000/v1/models"
+  #   "Error: Server health check never passed at http://127.0.0.1:8101/v1/models"
   # A placeholder inside a JSON literal is unreachable. Keep the JSON in the value.
   # `attention_backend` inside this blob is NOT redundant with the --attention-backend
   # flag below. The Qwen3.5 MTP drafter builds its OWN attention selector and ignores

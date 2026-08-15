@@ -243,8 +243,8 @@ settings every number on this page was measured with:
 
 sparkrun run qwen38-27b-nvfp4-refusal-dial.yaml
 
-curl -XPOST localhost:8000/admin/refusal_lambda -d '{"lambda": 1}'   # ablation on
-curl -XPOST localhost:8000/admin/refusal_lambda -d '{"lambda": 0}'   # off, bit-exact
+curl -XPOST localhost:8101/admin/refusal_lambda -d '{"lambda": 1}'   # ablation on
+curl -XPOST localhost:8101/admin/refusal_lambda -d '{"lambda": 0}'   # off, bit-exact
 ```
 
 It pulls the **stock** `unsloth/Qwen3.8-27B-NVFP4` at a pinned revision, so there is no second
