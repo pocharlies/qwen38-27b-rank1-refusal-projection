@@ -24,10 +24,15 @@ runtime: vllm
 min_nodes: 1
 max_nodes: 1
 
-# Build from deploy/Dockerfile in this repo, then push to your own registry.
-# It is COPY-only over an existing vLLM image, so it cross-builds to arm64 from x86
-# without QEMU.
-container: ghcr.io/pocharlies/vllm-qwen38-rank1:20260815
+# YOU MUST BUILD THIS FIRST — there is no public image to pull. From the repo root:
+#
+#   docker buildx build --platform linux/arm64 \
+#     -t <your-registry>/vllm-qwen38-rank1:20260815 \
+#     --push -f deploy/Dockerfile .
+#
+# then put what you pushed here. It is COPY-only over the public upstream base, so it
+# cross-builds to arm64 from an x86 host without QEMU (~3 min).
+container: CHANGE-ME/vllm-qwen38-rank1:20260815
 
 metadata:
   description: >-
