@@ -15,7 +15,7 @@ speculative decoding k=3, `--max-model-len 65536`.
 | Benign controls falsely refused | 0/1 | 0/1 | classifier sane |
 | Tool-calling | OK | OK | no regression |
 | Throughput, alternated (tok/s) | 20.2 / 20.4 | 20.6 / 20.3 | indistinguishable |
-| MTP acceptance length | 3.29 – 3.57 (max 4 at k=3) | | drafter intact |
+| MTP acceptance length | 2.80 median (62 samples), max 4.00 at k=3 | | drafter intact |
 
 Same pod, same prompts, `temperature 0`, seconds apart. λ=0 opens every trigger with
 "No puedo generar…" / "No puedo proporcionar…"; λ=1 answers all five. The benign control is
@@ -165,7 +165,35 @@ generation is not a smoke test.
 
 ---
 
-## 6. Reproducing it
+## 6. One-command launch on a DGX Spark (`sparkrun`)
+
+A ready recipe is in [`recipes/`](recipes/qwen38-27b-nvfp4-refusal-dial.yaml) — the same
+settings every number on this page was measured with:
+
+```bash
+sparkrun launch qwen38-27b-nvfp4-refusal-dial
+
+curl -XPOST localhost:8000/admin/refusal_lambda -d '{"lambda": 1}'   # ablation on
+curl -XPOST localhost:8000/admin/refusal_lambda -d '{"lambda": 0}'   # off, bit-exact
+```
+
+It pulls the **stock** `unsloth/Qwen3.8-27B-NVFP4` at a pinned revision, so there is no second
+checkpoint anywhere in the flow. Point `container:` at your own build of
+[`deploy/Dockerfile`](deploy/Dockerfile) — it is COPY-only over an existing vLLM image, so it
+cross-builds to arm64 from an x86 host without QEMU.
+
+Two things in that file are load-bearing, not stylistic:
+
+- `pre_exec` runs the fail-closed guard **before** serving. If any of the 128 directions is
+  unclaimed, it aborts. A half-ablated model raises no error.
+- `--attention-backend triton_attn` is not optional on vLLM 0.25.2 (see §5).
+
+`VLLM_REFUSAL_LAMBDA_INIT` is `0.0`: it comes up **censored**, and uncensored is something you
+turn on.
+
+---
+
+## 7. Reproducing it
 
 ```bash
 # 1 — which published ablation is actually rank-1? (~500 MB per candidate, no full download)
@@ -196,7 +224,7 @@ python3 bench/bench_refusal.py --base http://<pod>:8888 --model <served-name> --
 
 ---
 
-## 7. What this does **not** establish
+## 8. What this does **not** establish
 
 - **General capability is unmeasured.** MMLU-Pro, GSM8K, HumanEval were not run. Tool-calling,
   throughput and MTP acceptance are covered; general reasoning is not.
@@ -210,7 +238,7 @@ python3 bench/bench_refusal.py --base http://<pod>:8888 --model <served-name> --
 
 ---
 
-## 8. Security: this cuts in an uncomfortable direction
+## 9. Security: this cuts in an uncomfortable direction
 
 Reducing a model's resistance to instructions reduces its resistance to **injected**
 instructions arriving inside untrusted content. Prompt injection and refusal are not

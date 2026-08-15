@@ -93,7 +93,7 @@ Same pod, same prompts, `temperature 0`, seconds between arms:
 | Benign control falsely refused | 0/1 | 0/1 |
 | Tool-calling | OK | OK |
 | Throughput, alternated (tok/s) | 20.2 / 20.4 | 20.6 / 20.3 |
-| MTP acceptance length | 3.29 – 3.57 (max 4 at k=3) | |
+| MTP acceptance length | 2.80 median (62 samples), max 4.00 at k=3 | |
 
 The dial costs nothing measurable in throughput, and MTP acceptance holds even though the
 drafter itself is not projected.
@@ -108,7 +108,26 @@ drafter itself is not projected.
 - `λ=0` is bit-exact in output but **not free in compute**: the dot product and subtraction run
   in all 128 modules on every token. For zero cost, unset `VLLM_REFUSAL_DIRS`.
 
-## Serving
+## Serving on a DGX Spark: one command
+
+A [`sparkrun`](https://sparkrun.dev) recipe ships next to these vectors —
+`qwen38-27b-nvfp4-refusal-dial.yaml`, the exact settings every number above was measured with:
+
+```bash
+sparkrun launch qwen38-27b-nvfp4-refusal-dial
+
+curl -XPOST localhost:8000/admin/refusal_lambda -d '{"lambda": 1}'   # ablation on
+curl -XPOST localhost:8000/admin/refusal_lambda -d '{"lambda": 0}'   # off, bit-exact
+```
+
+It pulls the **stock** `unsloth/Qwen3.8-27B-NVFP4` at a pinned revision — no second checkpoint
+anywhere. Set `container:` to your own build of the Dockerfile in the GitHub repo (COPY-only
+over an existing vLLM image, so it cross-builds to arm64 from x86 without QEMU).
+
+Two lines in it are load-bearing: `pre_exec` runs the fail-closed guard **before** serving, and
+`--attention-backend triton_attn` is not optional on vLLM 0.25.2 — see below.
+
+## Serving by hand
 
 Requires the vLLM patch in the GitHub repo. Serve the **clean** checkpoint (or a clean
 quantization of it — this was validated against `unsloth/Qwen3.8-27B-NVFP4`) with
