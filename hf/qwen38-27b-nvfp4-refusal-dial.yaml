@@ -1,6 +1,6 @@
 # sparkrun recipe — Qwen3.8-27B NVFP4 + MTP, with the refusal dial
 #
-#   sparkrun launch qwen38-27b-nvfp4-refusal-dial
+#   sparkrun run qwen38-27b-nvfp4-refusal-dial.yaml
 #   curl -XPOST localhost:8000/admin/refusal_lambda -d '{"lambda": 1}'   # ablation on
 #   curl -XPOST localhost:8000/admin/refusal_lambda -d '{"lambda": 0}'   # off, bit-exact
 #

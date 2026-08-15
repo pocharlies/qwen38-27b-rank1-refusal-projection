@@ -174,7 +174,7 @@ settings every number on this page was measured with:
 # The image is public — no login, no build step:
 #   harbor.e-dani.com/library/vllm-qwen38-rank1:20260815   (arm64 / sm_121 only)
 
-sparkrun launch qwen38-27b-nvfp4-refusal-dial
+sparkrun run qwen38-27b-nvfp4-refusal-dial.yaml
 
 curl -XPOST localhost:8000/admin/refusal_lambda -d '{"lambda": 1}'   # ablation on
 curl -XPOST localhost:8000/admin/refusal_lambda -d '{"lambda": 0}'   # off, bit-exact

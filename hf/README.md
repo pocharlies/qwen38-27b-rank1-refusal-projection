@@ -114,7 +114,7 @@ A [`sparkrun`](https://sparkrun.dev) recipe ships next to these vectors —
 `qwen38-27b-nvfp4-refusal-dial.yaml`, the exact settings every number above was measured with:
 
 ```bash
-sparkrun launch qwen38-27b-nvfp4-refusal-dial
+sparkrun run qwen38-27b-nvfp4-refusal-dial.yaml
 
 curl -XPOST localhost:8000/admin/refusal_lambda -d '{"lambda": 1}'   # ablation on
 curl -XPOST localhost:8000/admin/refusal_lambda -d '{"lambda": 0}'   # off, bit-exact
