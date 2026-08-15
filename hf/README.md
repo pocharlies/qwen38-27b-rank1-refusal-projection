@@ -98,6 +98,13 @@ Same pod, same prompts, `temperature 0`, seconds between arms:
 The dial costs nothing measurable in throughput on benign work. MTP acceptance is a more
 nuanced story — see below.
 
+**Do not read ~20 tok/s as this model's speed on a DGX Spark.** That figure comes from a node
+whose GB10 is *shared* by five workloads — this model (33 GB), a vision model (30 GB), two BGE
+pools and a TTS — hence `gpu_memory_utilization: 0.35`. The λ=0 vs λ=1 comparison holds,
+because both arms ran under identical contention seconds apart; only the absolute number is
+depressed. On a **dedicated** Spark, an independent user running this exact recipe reported
+**~40 tok/s** (third-party report, not measured here).
+
 ### The drafter is not projected, and on refusal topics that costs ~20%
 
 Measured on the served pod, 300 tokens, `temperature 0`:

@@ -15,6 +15,10 @@
 # Measured on one DGX Spark (GB10, 128 GB unified) with exactly these settings:
 #   refusal      5/5 (lambda=0)  ->  0/5 (lambda=1)
 #   throughput   20.2 / 20.4  vs  20.6 / 20.3 tok/s, alternated — no measurable cost
+#                NOTE: that node's GB10 is SHARED with four other workloads, so ~20 tok/s is
+#                not this model's speed on a Spark. A user on a DEDICATED Spark running this
+#                exact recipe reported ~40 tok/s. The lambda comparison still holds: both
+#                arms ran under identical contention, seconds apart.
 #   MTP accept   2.80 median over 62 samples, max 4.00 at k=3
 #   tool-calling OK in both arms
 

@@ -14,12 +14,21 @@ speculative decoding k=3, `--max-model-len 65536`.
 | Refusal rate (5 triggers) | **5/5 (100 %)** | **0/5 (0 %)** | eliminated |
 | Benign controls falsely refused | 0/1 | 0/1 | classifier sane |
 | Tool-calling | OK | OK | no regression |
-| Throughput, alternated (tok/s) | 20.2 / 20.4 | 20.6 / 20.3 | indistinguishable |
+| Throughput, alternated (tok/s) | 20.2 / 20.4 | 20.6 / 20.3 | indistinguishable (shared GPU — see note) |
 | MTP acceptance length | 2.80 median (62 samples), max 4.00 at k=3 | | drafter intact |
 
 Same pod, same prompts, `temperature 0`, seconds apart. λ=0 opens every trigger with
 "No puedo generar…" / "No puedo proporcionar…"; λ=1 answers all five. The benign control is
 answered in **both** arms, so the classifier is not inflating the number.
+
+> **Do not read ~20 tok/s as this model's speed on a DGX Spark.** Those numbers come from a
+> node whose GB10 is *shared* by five workloads — this model (33 GB), a vision model (30 GB),
+> two BGE pools and a TTS — which is why the pod runs at `gpu_memory_utilization: 0.35`.
+> The λ=0 vs λ=1 comparison is still valid, because both arms ran under identical contention
+> seconds apart; only the absolute figure is depressed. On a **dedicated** Spark, an
+> independent user running this exact recipe reported **~40 tok/s** (third-party report, not
+> measured here). Re-measured on the shared node while writing this note: 18.73 / 17.18 /
+> 19.72 tok/s, median 18.73.
 
 ---
 
