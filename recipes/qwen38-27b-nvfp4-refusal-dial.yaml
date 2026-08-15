@@ -27,7 +27,7 @@ max_nodes: 1
 # Build from deploy/Dockerfile in this repo, then push to your own registry.
 # It is COPY-only over an existing vLLM image, so it cross-builds to arm64 from x86
 # without QEMU.
-container: ghcr.io/YOUR-USER/vllm-qwen38-rank1:latest
+container: ghcr.io/pocharlies/vllm-qwen38-rank1:20260815
 
 metadata:
   description: >-
