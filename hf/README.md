@@ -95,8 +95,33 @@ Same pod, same prompts, `temperature 0`, seconds between arms:
 | Throughput, alternated (tok/s) | 20.2 / 20.4 | 20.6 / 20.3 |
 | MTP acceptance length | 2.80 median (62 samples), max 4.00 at k=3 | |
 
-The dial costs nothing measurable in throughput, and MTP acceptance holds even though the
-drafter itself is not projected.
+The dial costs nothing measurable in throughput on benign work. MTP acceptance is a more
+nuanced story — see below.
+
+### The drafter is not projected, and on refusal topics that costs ~20%
+
+Measured on the served pod, one generation per cell, 300 tokens, `temperature 0`:
+
+| prompt | λ | MTP acceptance |
+|---|---:|---:|
+| benign (write quicksort) | 0 | 2.84 |
+| benign (write quicksort) | 1 | 3.00 |
+| **refusal trigger (phishing email)** | **1** | **2.41** |
+
+So acceptance holds on benign work but drops ~20% on exactly the topics someone turns the
+dial on for. The cause is structural: the target is projected, the drafter is not, so on
+refusal-adjacent tokens the drafter proposes what the *unablated* model would say and the
+target rejects it.
+
+This was predicted before it was measured — the advice was "the patch has to change the
+drafter's lambda too, or acceptance collapses on rejected topics". It does not collapse
+here, but it does drop, and the direction is exactly the one predicted.
+
+`VLLM_REFUSAL_MTP_MODE=last|mean` exists to project the drafter with a backbone direction
+(Ektome ships no `mtp.*` tensors, so there is no measured direction for it — `mean` is a
+heuristic). **It is not measured.** Until someone runs the same table with it on, `off`
+stays the default: it reproduces the source ablation exactly, and a 20% acceptance drop on
+one class of prompt is a worse trade than an unverified fix.
 
 ## Limitations
 

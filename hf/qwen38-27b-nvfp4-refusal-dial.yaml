@@ -54,6 +54,12 @@ defaults:
   spec_tokens: 3                 # native MTP; the checkpoint ships mtp.* weights
   refusal_dirs: /opt/refusal/refusal_dirs_qwen38.safetensors
   refusal_lambda_init: "0.0"     # starts CENSORED on purpose — uncensored is opt-in
+  # MEASURED: with the drafter unprojected, acceptance is 3.00 on benign prompts but
+  # 2.41 on refusal triggers at lambda=1 — a ~20% drop on exactly the topics you turn
+  # the dial on for. Structural: the target is projected, the drafter is not, so it
+  # proposes what the UNABLATED model would say and the target rejects it.
+  # `last`/`mean` project the drafter with a backbone direction and should recover it,
+  # but that is NOT measured. `off` reproduces the source ablation exactly.
   refusal_mtp_mode: "off"
 
 env:
