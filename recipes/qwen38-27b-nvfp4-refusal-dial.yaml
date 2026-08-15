@@ -58,8 +58,12 @@ defaults:
   # 2.41 on refusal triggers at lambda=1 — a ~20% drop on exactly the topics you turn
   # the dial on for. Structural: the target is projected, the drafter is not, so it
   # proposes what the UNABLATED model would say and the target rejects it.
-  # `last`/`mean` project the drafter with a backbone direction and should recover it,
-  # but that is NOT measured. `off` reproduces the source ablation exactly.
+  # `last`/`mean` project the drafter with a backbone direction. MEASURED, 3 reps: it does
+  # NOT recover the gap (0.59 -> 0.55, noise; the benign column alone spans 0.39). The
+  # control: at lambda=0 the projection is x0, so mean and off must be identical — they
+  # measured 2.94 vs 2.84, which is this bench's noise floor. `off` reproduces the source
+  # ablation exactly and mean buys nothing measurable.
+  # (last == mean here anyway: all 128 directions are the same vector, cos >= 0.9996.)
   refusal_mtp_mode: "off"
 
 env:

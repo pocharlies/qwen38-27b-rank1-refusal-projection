@@ -147,7 +147,7 @@ hand. Cost of the guard: one restart each.
 
 ### The drafter is not projected, and on refusal topics that costs ~20%
 
-Measured on the served pod, one generation per cell, 300 tokens, `temperature 0`:
+Measured on the served pod, 300 tokens, `temperature 0`:
 
 | prompt | λ | MTP acceptance |
 |---|---:|---:|
@@ -155,20 +155,38 @@ Measured on the served pod, one generation per cell, 300 tokens, `temperature 0`
 | benign (write quicksort) | 1 | 3.00 |
 | **refusal trigger (phishing email)** | **1** | **2.41** |
 
-So acceptance holds on benign work but drops ~20% on exactly the topics someone turns the
-dial on for. The cause is structural: the target is projected, the drafter is not, so on
-refusal-adjacent tokens the drafter proposes what the *unablated* model would say and the
-target rejects it.
+Acceptance holds on benign work but drops ~20% on exactly the topics someone turns the dial
+on for. This was predicted before it was measured: *"the patch only touches the main model,
+not the drafter, so on rejected topics the mini-model keeps refusing and acceptance
+collapses — the patch has to change the drafter's lambda too."*
 
-This was predicted before it was measured — the advice was "the patch has to change the
-drafter's lambda too, or acceptance collapses on rejected topics". It does not collapse
-here, but it does drop, and the direction is exactly the one predicted.
+**The effect is real. The proposed cause is not.** Projecting the drafter with a backbone
+direction (`VLLM_REFUSAL_MTP_MODE=mean`) does not recover it — measured, 3 reps per cell:
 
-`VLLM_REFUSAL_MTP_MODE=last|mean` exists to project the drafter with a backbone direction
-(Ektome ships no `mtp.*` tensors, so there is no measured direction for it — `mean` is a
-heuristic). **It is not measured.** Until someone runs the same table with it on, `off`
-stays the default: it reproduces the source ablation exactly, and a 20% acceptance drop on
-one class of prompt is a worse trade than an unverified fix.
+| | refusal λ=1 | benign λ=1 | gap |
+|---|---:|---:|---:|
+| drafter unprojected | 2.41 | 3.00 | **0.59** |
+| drafter projected | 2.43 / 2.54 / 2.44 → 2.47 | 2.77 / 3.16 / 3.14 → 3.02 | **0.55** |
+
+0.59 → 0.55 is noise: the benign column alone spans 0.39 across reps.
+
+The control that settles it: at **λ=0** the projection is multiplied by zero, so `mean` and
+`off` must be *identical*. They measured 2.94 and 2.84. That 0.10 is the bench's noise floor,
+and every "improvement" visible at n=1 sat below it. Do not trust a single sample here.
+
+Best remaining explanation: the backbone already hands the drafter an ablated hidden state,
+so little refusal signal survives into the drafter's own layer, and the gap is about how
+hard that *content* is to predict rather than about who is ablated.
+
+`off` is the default: it reproduces the source ablation exactly and `mean` buys nothing
+measurable.
+
+### One direction, not 128
+
+All 128 extracted directions are effectively the same vector — cos against layer 63 is
+**0.9996 minimum, 1.0000 median**, and `cos(mean, layer63) = 1.0000`. Refusal is mediated by
+a single global direction in the residual stream, measured here on a 64-layer hybrid with
+linear and full attention interleaved. It also makes `last` and `mean` the same choice.
 
 ---
 
