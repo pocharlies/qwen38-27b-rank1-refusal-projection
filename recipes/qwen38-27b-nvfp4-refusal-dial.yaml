@@ -51,7 +51,18 @@ defaults:
   kv_cache_bytes: 8589934592     # 8 GiB
   max_num_seqs: 4
   max_num_batched_tokens: 16384
-  spec_tokens: 3                 # native MTP; the checkpoint ships mtp.* weights
+  # native MTP; the checkpoint ships mtp.* weights.
+  # NOTE: this is the WHOLE JSON blob on purpose, not just the number.
+  # sparkrun substitutes with the regex `\{(.*?)\}` (vpd arg_substitute), which is
+  # non-greedy and brace-blind: in `'{"method":"mtp","num_speculative_tokens":{spec_tokens}}'`
+  # the first `{` pairs with the first `}`, so the match is the key
+  # `"method":"mtp","num_speculative_tokens":{spec_tokens}` — no such default exists, the
+  # whole thing is put back verbatim, and vLLM gets literal `{spec_tokens}`:
+  #   JSONDecodeError: Expecting property name enclosed in double quotes (char 42)
+  # vLLM then exits before binding the port and sparkrun reports only
+  #   "Error: Server health check never passed at http://127.0.0.1:8000/v1/models"
+  # A placeholder inside a JSON literal is unreachable. Keep the JSON in the value.
+  speculative_config: '{"method":"mtp","num_speculative_tokens":3}'
   refusal_dirs: /opt/refusal/refusal_dirs_qwen38.safetensors
   refusal_lambda_init: "0.0"     # starts CENSORED on purpose — uncensored is opt-in
   # MEASURED: with the drafter unprojected, acceptance is 3.00 on benign prompts but
@@ -110,7 +121,7 @@ command: |
     --max-num-batched-tokens {max_num_batched_tokens} \
     --gpu-memory-utilization {gpu_memory_utilization} \
     --kv-cache-memory-bytes {kv_cache_bytes} \
-    --speculative-config '{"method":"mtp","num_speculative_tokens":{spec_tokens}}' \
+    --speculative-config '{speculative_config}' \
     --limit-mm-per-prompt '{"image":16}' \
     -tp {tensor_parallel} \
     --host {host} \
