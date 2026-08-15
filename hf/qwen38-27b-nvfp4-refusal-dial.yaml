@@ -24,11 +24,13 @@ runtime: vllm
 min_nodes: 1
 max_nodes: 1
 
-# Pullable anonymously — no login, no build step needed:
-#   docker pull harbor.e-dani.com/library/vllm-qwen38-rank1:20260815
-# arm64/sm_121 only (built for the GB10). To build it yourself instead, see
-# deploy/Dockerfile — it is COPY-only over the public upstream base, ~3 min.
-container: harbor.e-dani.com/library/vllm-qwen38-rank1:20260815
+# Pullable anonymously from Docker Hub — no login, no build step:
+#   docker pull pocharlies/vllm-qwen38-rank1:20260815
+# arm64 / sm_121 only (built for the GB10). Mirror, if Docker Hub rate-limits you:
+#   harbor.e-dani.com/library/vllm-qwen38-rank1:20260815
+# To build it yourself instead see deploy/Dockerfile — COPY-only over the public
+# upstream base, so it cross-builds to arm64 from an x86 host without QEMU (~3 min).
+container: docker.io/pocharlies/vllm-qwen38-rank1:20260815
 
 metadata:
   description: >-

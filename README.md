@@ -172,7 +172,7 @@ settings every number on this page was measured with:
 
 ```bash
 # The image is public — no login, no build step:
-#   harbor.e-dani.com/library/vllm-qwen38-rank1:20260815   (arm64 / sm_121 only)
+#   pocharlies/vllm-qwen38-rank1:20260815   (arm64 / sm_121 only)
 
 sparkrun run qwen38-27b-nvfp4-refusal-dial.yaml
 
