@@ -171,13 +171,9 @@ A ready recipe is in [`recipes/`](recipes/qwen38-27b-nvfp4-refusal-dial.yaml) â€
 settings every number on this page was measured with:
 
 ```bash
-# 1. build the image. COPY-only over the PUBLIC upstream base, so it cross-builds
-#    to arm64 from an x86 host without QEMU.
-docker buildx build --platform linux/arm64 \
-  -t <your-registry>/vllm-qwen38-rank1:20260815 \
-  --push -f deploy/Dockerfile .
+# The image is public â€” no login, no build step:
+#   harbor.e-dani.com/library/vllm-qwen38-rank1:20260815   (arm64 / sm_121 only)
 
-# 2. point `container:` in the recipe at what you just pushed, then
 sparkrun launch qwen38-27b-nvfp4-refusal-dial
 
 curl -XPOST localhost:8000/admin/refusal_lambda -d '{"lambda": 1}'   # ablation on
@@ -185,7 +181,9 @@ curl -XPOST localhost:8000/admin/refusal_lambda -d '{"lambda": 0}'   # off, bit-
 ```
 
 It pulls the **stock** `unsloth/Qwen3.8-27B-NVFP4` at a pinned revision, so there is no second
-checkpoint anywhere in the flow.
+checkpoint anywhere in the flow. To build the image yourself instead, see
+[`deploy/Dockerfile`](deploy/Dockerfile): COPY-only over the public upstream base, so it
+cross-builds to arm64 from an x86 host without QEMU (~3 min).
 
 Two things in that file are load-bearing, not stylistic:
 

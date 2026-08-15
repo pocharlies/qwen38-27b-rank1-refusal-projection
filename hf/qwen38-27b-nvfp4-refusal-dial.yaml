@@ -24,15 +24,11 @@ runtime: vllm
 min_nodes: 1
 max_nodes: 1
 
-# YOU MUST BUILD THIS FIRST — there is no public image to pull. From the repo root:
-#
-#   docker buildx build --platform linux/arm64 \
-#     -t <your-registry>/vllm-qwen38-rank1:20260815 \
-#     --push -f deploy/Dockerfile .
-#
-# then put what you pushed here. It is COPY-only over the public upstream base, so it
-# cross-builds to arm64 from an x86 host without QEMU (~3 min).
-container: CHANGE-ME/vllm-qwen38-rank1:20260815
+# Pullable anonymously — no login, no build step needed:
+#   docker pull harbor.e-dani.com/library/vllm-qwen38-rank1:20260815
+# arm64/sm_121 only (built for the GB10). To build it yourself instead, see
+# deploy/Dockerfile — it is COPY-only over the public upstream base, ~3 min.
+container: harbor.e-dani.com/library/vllm-qwen38-rank1:20260815
 
 metadata:
   description: >-
