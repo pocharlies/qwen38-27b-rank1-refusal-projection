@@ -177,8 +177,13 @@ linear and full attention interleaved. It also makes `last` and `mean` the same 
 - **General capability is unmeasured** — no MMLU-Pro, GSM8K or HumanEval. No long-context
   retrieval either.
 - **Small refusal sample**: 5 triggers, 1 control, 1 rep. Clean separation, not a precise rate.
-- **The MTP drafter is not ablated.** Ektome ships no `mtp.*` tensors, so there is no direction
-  to extract for it. Acceptance stays high anyway.
+- **The MTP drafter is not ablated.** Ektome *does* ship all 15 `mtp.*` tensors, but they are
+  **byte-identical to the base** (`mtp.layers.0.self_attn.o_proj` sha256 `9165a16183…`), so
+  there is no direction to extract from them. Acceptance stays high anyway. *(Corrected: this
+  line previously said the tensors were absent — presence is not ablation.)*
+- **The vision tower is untouched, exactly.** 333/333 `model.visual.*` tensors byte-identical
+  between base and ablation, including `merger.linear_fc2.weight`, the only one whose output
+  reaches the residual stream. The gap is zero, not merely small.
 - `λ=0` is bit-exact in output but **not free in compute**: the dot product and subtraction run
   in all 128 modules on every token. For zero cost, unset `VLLM_REFUSAL_DIRS`.
 
