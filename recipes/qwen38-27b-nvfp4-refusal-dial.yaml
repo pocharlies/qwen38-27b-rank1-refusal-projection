@@ -62,7 +62,14 @@ defaults:
   # vLLM then exits before binding the port and sparkrun reports only
   #   "Error: Server health check never passed at http://127.0.0.1:8000/v1/models"
   # A placeholder inside a JSON literal is unreachable. Keep the JSON in the value.
-  speculative_config: '{"method":"mtp","num_speculative_tokens":3}'
+  # `attention_backend` inside this blob is NOT redundant with the --attention-backend
+  # flag below. The Qwen3.5 MTP drafter builds its OWN attention selector and ignores
+  # the target's choice: it picks FlashInfer, which then dies on the first prefill with
+  # the 19-vs-20 argument `plan()` ABI mismatch of the published 0.6.15 JIT-cache wheel.
+  # The server never reaches ready, so all you see is sparkrun's
+  #   "Error: Server health check never passed"
+  # Both places have to say triton_attn. This is what production runs.
+  speculative_config: '{"method":"mtp","num_speculative_tokens":3,"attention_backend":"triton_attn"}'
   refusal_dirs: /opt/refusal/refusal_dirs_qwen38.safetensors
   refusal_lambda_init: "0.0"     # starts CENSORED on purpose — uncensored is opt-in
   # MEASURED: with the drafter unprojected, acceptance is 3.00 on benign prompts but
@@ -100,10 +107,13 @@ post_commands:
   - 'echo "ablation on:  curl -XPOST {head_host}:{port}/admin/refusal_lambda -d ''{{\"lambda\": 1}}''"'
   - 'echo "ablation off: curl -XPOST {head_host}:{port}/admin/refusal_lambda -d ''{{\"lambda\": 0}}''"'
 
-# --attention-backend triton_attn is NOT optional on vLLM 0.25.2.
-# flashinfer starts fine, captures CUDA graphs, and then dies on the FIRST real
-# inference with `plan(): Mismatched number of arguments` — the signature does not match
-# the Qwen3.5 full_attention path. It only shows up if your smoke test sends a prompt.
+# --attention-backend triton_attn is NOT optional on vLLM 0.25.2, and it has to be set
+# TWICE: once here for the target model and once inside --speculative-config for the MTP
+# drafter, which selects its backend independently. flashinfer starts fine, captures CUDA
+# graphs, and then dies with `plan(): Mismatched number of arguments` — the signature does
+# not match the Qwen3.5 full_attention path. On the target it only shows up if your smoke
+# test sends a prompt; on the drafter it kills startup, so the only symptom is sparkrun's
+# "Server health check never passed".
 command: |
   vllm serve {model} \
     --served-model-name {served_model_name} \
