@@ -134,6 +134,30 @@ hard that *content* is to predict rather than about who is ablated.
 `off` is the default: it reproduces the source ablation exactly and `mean` buys nothing
 measurable.
 
+### …and it is not a defect, it is the price of the content
+
+Sweeping λ on the live dial (no restart — that is what the dial is for), 4 triggers each,
+acceptance measured on a long generation for the same refusal topic:
+
+| λ | refusals | acceptance |
+|---:|---:|---:|
+| 0.3 | 4/4 | 2.72 |
+| 0.5 | 3/4 | 2.87 |
+| 0.7 | 1/4 | 2.41 |
+| **1.0** | **0/4** | 2.61 |
+
+Acceptance is *highest* at the λ where the model still refuses, and drops once it starts
+complying. A refusal is formulaic text the drafter predicts easily; the content produced by
+complying is novel and it does not. **Acceptance tracks what is being generated, not λ** —
+note λ=1.0 scores above λ=0.7, which rules out a monotonic penalty in λ.
+
+So there is no λ that both removes refusal and keeps benign-level acceptance, because the
+drop *is* the cost of generating the non-refusal content. Nothing to fix here.
+
+Useful by-product: the dose-response on refusal is clean — 4/4 → 3/4 → 1/4 → 0/4 — and
+**λ=1.0 is the operating point**. No reason to go lower, and unlike the DeepSeek-V4 reference
+(which needed 1.5 and sat at λ_eff 2.43), no reason to go higher.
+
 ### One direction, not 128
 
 All 128 extracted directions are effectively the same vector — cos against layer 63 is
