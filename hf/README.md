@@ -3,6 +3,8 @@ license: apache-2.0
 base_model:
   - Qwen/Qwen3.8-27B
 tags:
+  - uncensored
+  - abliterated
   - refusal-direction
   - abliteration
   - activation-steering
@@ -105,6 +107,30 @@ because both arms ran under identical contention seconds apart; only the absolut
 depressed. On a **dedicated** Spark, an independent user running this exact recipe reported
 **~40 tok/s** (third-party report, not measured here).
 
+### Expanded four-lambda benchmark (2026-08-17)
+
+The deployment smoke above has now been followed by a paired evaluation at λ=0, 1, 1.5 and
+2.5: 60 StrongREJECT prompts per arm, 100 GSM8K items, 112 balanced MMLU-Pro items, MTP/speed
+prompt families and an eight-case tool battery.
+
+| metric | λ=0 | λ=1 | λ=1.5 | λ=2.5 |
+|---|---:|---:|---:|---:|
+| Strict classifier refusals | 32/60 | **0/60** | 0/60 | 29/60 |
+| Normal answers / disclaimers | 7 / 21 | **56 / 4** | 60 / 0 | 11 / 20 |
+| GSM8K (n=100) | 84% | **81%** | 76% | invalid: runaway |
+| MMLU-Pro (n=112) | 76.79% | **75.00%** | 50.00% | invalid: runaway |
+| MTP acceptance, code / varied | 78.01 / 57.93% | **75.64 / 56.89%** | 69.04 / 55.40% | invalid |
+| Tool battery | 7/8 | **7/8** | 6/8 | invalid |
+
+Against λ=0, the λ=1 quality differences are not statistically detectable in these samples
+(GSM8K `p=0.25`, MMLU-Pro `p=0.7905`). λ=1.5 significantly degrades both suites. At λ=2.5,
+refusal returns almost to baseline and generation becomes pathologically slow. Abliteration
+strength is **not monotonic** after the calibrated edit has been applied once.
+
+**Operating point: λ=1.** Full methodology, Wilson intervals, paired tests, early-stop records,
+machine-readable aggregates and the controlled interpretation of Goldhub's Reddit results are
+in [`benchmarks/2026-08-17/`](benchmarks/2026-08-17/README.md).
+
 ### The drafter is not projected, and on refusal topics that costs ~20%
 
 Measured on the served pod, 300 tokens, `temperature 0`:
@@ -174,9 +200,15 @@ linear and full attention interleaved. It also makes `last` and `mean` the same 
 
 ## Limitations
 
-- **General capability is unmeasured** — no MMLU-Pro, GSM8K or HumanEval. No long-context
-  retrieval either.
-- **Small refusal sample**: 5 triggers, 1 control, 1 rep. Clean separation, not a precise rate.
+- **General capability is sampled, not exhausted.** The expanded run covers 100 GSM8K and
+  112 balanced MMLU-Pro examples; HumanEval and the full benchmark suites were not run.
+- **Refusal is measured on 60 StrongREJECT prompts per arm**, balanced across six categories.
+  Category cells still contain only ten prompts. The 5-trigger/1-control table above is the
+  earlier deployment smoke, not the final rate estimate.
+- **Long-context retrieval is inconclusive.** The planned 32K/128K NIAH run was stopped after
+  31 minutes of external runtime saturation and received no score.
+- **Speed/MTP has one replicate**, and λ=1.5 retained four of five clean prompts per family
+  after external-load retries were exhausted.
 - **The MTP drafter is not ablated.** Ektome *does* ship all 15 `mtp.*` tensors, but they are
   **byte-identical to the base** (`mtp.layers.0.self_attn.o_proj` sha256 `9165a16183…`), so
   there is no direction to extract from them. Acceptance stays high anyway. *(Corrected: this

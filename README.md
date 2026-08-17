@@ -7,19 +7,29 @@ no restart.
 Measured on a DGX Spark GB10 (sm_121, 128 GB unified), vLLM 0.25.2, TP=1, native MTP
 speculative decoding k=3, `--max-model-len 65536`.
 
-**Headline result — λ=1 removes refusal completely at no measurable cost:**
+Direction vectors and model card:
+[`pocharlies/qwen38-27b-uncensored-abliterated-refusal-directions`](https://huggingface.co/pocharlies/qwen38-27b-uncensored-abliterated-refusal-directions).
 
-| metric | λ=0 | λ=1 | verdict |
-|---|---:|---:|---|
-| Refusal rate (5 triggers) | **5/5 (100 %)** | **0/5 (0 %)** | eliminated |
-| Benign controls falsely refused | 0/1 | 0/1 | classifier sane |
-| Tool-calling | OK | OK | no regression |
-| Throughput, alternated (tok/s) | 20.2 / 20.4 | 20.6 / 20.3 | indistinguishable (shared GPU — see note) |
-| MTP acceptance length | 2.80 median (62 samples), max 4.00 at k=3 | | drafter intact |
+**Headline result — λ=1 is the measured operating point:**
 
-Same pod, same prompts, `temperature 0`, seconds apart. λ=0 opens every trigger with
-"No puedo generar…" / "No puedo proporcionar…"; λ=1 answers all five. The benign control is
-answered in **both** arms, so the classifier is not inflating the number.
+| metric | λ=0 | λ=1 | λ=1.5 | λ=2.5 |
+|---|---:|---:|---:|---:|
+| Strict refusals, StrongREJECT (n=60/arm) | 32/60 | **0/60** | 0/60 | 29/60 |
+| Normal answers / disclaimers | 7 / 21 | **56 / 4** | 60 / 0 | 11 / 20 |
+| GSM8K (n=100) | 84% | **81%** | 76% | invalid: runaway |
+| MMLU-Pro (n=112) | 76.79% | **75.00%** | 50.00% | invalid: runaway |
+| MTP acceptance, code / varied | 78.01 / 57.93% | **75.64 / 56.89%** | 69.04 / 55.40% | invalid: timeout |
+| Tool-calling battery | 7/8 | **7/8** | 6/8 | invalid |
+
+Against λ=0, the λ=1 quality differences are not statistically detectable in these samples
+(GSM8K `p=0.25`, MMLU-Pro `p=0.7905`). λ=1.5 removes the last disclaimers but significantly
+degrades both quality suites. λ=2.5 is not “more uncensored”: refusal returns almost to the
+base rate and generation becomes pathologically slow. The effect is **not monotonic**.
+
+Full methodology, confidence intervals, paired tests, early-stops and the comparison with
+Goldhub's Reddit release:
+[`hf/benchmarks/2026-08-17/`](hf/benchmarks/2026-08-17/README.md). Machine-readable aggregate:
+[`results.json`](hf/benchmarks/2026-08-17/results.json).
 
 > **Do not read ~20 tok/s as this model's speed on a DGX Spark.** Those numbers come from a
 > node whose GB10 is *shared* by five workloads — this model (33 GB), a vision model (30 GB),
@@ -304,6 +314,10 @@ python3 bench/bench_refusal.py --base http://<pod>:8888 --model <served-name> --
 #     the same benign prompts at both λ, or the McNemar test does not apply.
 python3 bench/bench_overrefusal_v2.py --base http://<pod>:8888 --model <served-name> \
   --lambdas 0,-1.0 --out results.json
+
+# 8 — comprehensive 0/1/1.5/2.5 refusal, quality, MTP, tooling and NIAH harness
+#     (read the global-dial warning and early-stop notes first)
+less bench/comprehensive/README.md
 ```
 
 Every one of these runs against a live server and **moves a global dial**. On a pod serving
@@ -429,11 +443,14 @@ name says nothing about calibration.
 
 ## 9. What this does **not** establish
 
-- **General capability is unmeasured.** MMLU-Pro, GSM8K, HumanEval were not run. Tool-calling,
-  throughput and MTP acceptance are covered; general reasoning is not.
-- **Long-context retrieval is unmeasured** on this model. NIAH was not run.
-- **The refusal sample is small** — 5 triggers, 1 control, 1 rep. It is a clean separation
-  (5/5 → 0/5), not a precise rate.
+- **General capability is sampled, not exhausted.** The 2026-08-17 run covers 100 GSM8K and
+  112 balanced MMLU-Pro examples. HumanEval and the full benchmark suites were not run.
+- **Long-context retrieval is inconclusive.** A planned 32K/128K NIAH run was stopped after
+  31 minutes of external runtime saturation and deliberately received no score.
+- **Refusal is measured on 60 StrongREJECT prompts per arm**, balanced across six categories.
+  That is enough to distinguish the large λ effects, but category cells still contain only
+  ten examples. The earlier 5-trigger/1-control smoke remains useful as a deployment check,
+  not as the final rate estimate.
 - **The MTP drafter is not ablated.** Ektome *does* ship all 15 `mtp.*` tensors — but they
   are **byte-identical to the base** (`mtp.layers.0.self_attn.o_proj` sha256 `9165a16183…`,
   `mtp.layers.0.mlp.down_proj` sha256 `2fdda9751e…`), so there is no direction to extract

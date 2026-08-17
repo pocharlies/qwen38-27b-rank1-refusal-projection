@@ -1,0 +1,228 @@
+{
+  "schema_version": 1,
+  "published_at": "2026-08-17",
+  "model": {
+    "served_name": "qwen38-27b",
+    "checkpoint": "unsloth/Qwen3.8-27B-NVFP4",
+    "checkpoint_revision": "7d6f8d4d72f56b92b3cdbf22f156b90e1bab0108",
+    "projection_source": "Zynerji/Ektome-Qwen3.8-27B-PristinelyUncensored",
+    "mtp": {
+      "method": "native",
+      "speculative_tokens": 3,
+      "refusal_mtp_mode": "off"
+    }
+  },
+  "methodology": {
+    "paired_prompts_across_lambdas": true,
+    "lambdas": [0.0, 1.0, 1.5, 2.5],
+    "sampling_temperature": 0.0,
+    "strongreject": {
+      "samples_per_arm": 60,
+      "categories": 6,
+      "samples_per_category": 10,
+      "detectors": [
+        "literal refusal marker matching",
+        "Human-CentricAI/LLM-Refusal-Classifier"
+      ],
+      "classifier_revision": "0d9379eaad351ba5a89a3da24ef5b478d3daeff0"
+    },
+    "quality": {
+      "gsm8k_samples": 100,
+      "mmlu_pro_samples": 112,
+      "mmlu_pro_categories": 14,
+      "mmlu_pro_samples_per_category": 8,
+      "paired_test": "exact McNemar"
+    },
+    "speed_mtp": {
+      "target_replicates": 1,
+      "code_prompts": 5,
+      "varied_prompts": 5,
+      "max_generation_tokens": 600,
+      "external_load_guard": true,
+      "lambda_1_5_clean_prompts_per_family": 4
+    },
+    "raw_harmful_prompts_and_responses_published": false
+  },
+  "dangerous_prompt_refusal": {
+    "0.0": {
+      "literal_refusals": 48,
+      "literal_refusal_rate": 0.8,
+      "literal_refusal_ci95_wilson": [0.6821795391, 0.8817161026],
+      "classifier_strict_refusals": 32,
+      "classifier_strict_refusal_rate": 0.5333333333,
+      "classifier_strict_refusal_ci95_wilson": [0.4089320867, 0.6537229846],
+      "disclaimers_with_answer": 21,
+      "normal_answers": 7
+    },
+    "1.0": {
+      "literal_refusals": 9,
+      "literal_refusal_rate": 0.15,
+      "literal_refusal_ci95_wilson": [0.0809734924, 0.2611482589],
+      "classifier_strict_refusals": 0,
+      "classifier_strict_refusal_rate": 0.0,
+      "classifier_strict_refusal_ci95_wilson": [0.0, 0.0601739305],
+      "disclaimers_with_answer": 4,
+      "normal_answers": 56
+    },
+    "1.5": {
+      "literal_refusals": 1,
+      "literal_refusal_rate": 0.0166666667,
+      "literal_refusal_ci95_wilson": [0.0029480839, 0.0885533823],
+      "classifier_strict_refusals": 0,
+      "classifier_strict_refusal_rate": 0.0,
+      "classifier_strict_refusal_ci95_wilson": [0.0, 0.0601739305],
+      "disclaimers_with_answer": 0,
+      "normal_answers": 60
+    },
+    "2.5": {
+      "literal_refusals": 47,
+      "literal_refusal_rate": 0.7833333333,
+      "literal_refusal_ci95_wilson": [0.6637973165, 0.8687707895],
+      "classifier_strict_refusals": 29,
+      "classifier_strict_refusal_rate": 0.4833333333,
+      "classifier_strict_refusal_ci95_wilson": [0.3617484129, 0.6069240515],
+      "disclaimers_with_answer": 20,
+      "normal_answers": 11
+    },
+    "paired_strict_refusal_tests": {
+      "0.0_vs_1.0": {
+        "delta_right_minus_left": -0.5333333333,
+        "mcnemar_exact_p_two_sided": 4.6566128731e-10
+      },
+      "0.0_vs_1.5": {
+        "delta_right_minus_left": -0.5333333333,
+        "mcnemar_exact_p_two_sided": 4.6566128731e-10
+      },
+      "0.0_vs_2.5": {
+        "delta_right_minus_left": -0.05,
+        "mcnemar_exact_p_two_sided": 0.5810546875
+      },
+      "1.0_vs_2.5": {
+        "delta_right_minus_left": 0.4833333333,
+        "mcnemar_exact_p_two_sided": 3.7252902985e-9
+      }
+    }
+  },
+  "quality": {
+    "gsm8k": {
+      "n": 100,
+      "accuracy": {
+        "0.0": 0.84,
+        "1.0": 0.81,
+        "1.5": 0.76
+      },
+      "paired_vs_0.0": {
+        "1.0": {
+          "delta": -0.03,
+          "delta_ci95": [-0.0636035352, 0.0036035352],
+          "mcnemar_exact_p_two_sided": 0.25
+        },
+        "1.5": {
+          "delta": -0.08,
+          "delta_ci95": [-0.1463938174, -0.0136061826],
+          "mcnemar_exact_p_two_sided": 0.03857421875
+        }
+      }
+    },
+    "mmlu_pro": {
+      "n": 112,
+      "accuracy": {
+        "0.0": 0.7678571429,
+        "1.0": 0.75,
+        "1.5": 0.5
+      },
+      "paired_vs_0.0": {
+        "1.0": {
+          "delta": -0.0178571429,
+          "delta_ci95": [-0.0835464882, 0.0478322025],
+          "mcnemar_exact_p_two_sided": 0.79052734375
+        },
+        "1.5": {
+          "delta": -0.2678571429,
+          "delta_ci95": [-0.3502413778, -0.1854729079],
+          "mcnemar_exact_p_two_sided": 1.8626451492e-9
+        }
+      }
+    },
+    "2.5": {
+      "status": "invalid",
+      "reason": "generation_runaway",
+      "first_completion_seconds": 289.87,
+      "completed_before_stop": 3,
+      "score_assigned": false
+    }
+  },
+  "mtp_and_speed": {
+    "0.0": {
+      "mtp_acceptance_code": 0.7801,
+      "mtp_acceptance_varied": 0.5793,
+      "mean_acceptance_length": 3.34,
+      "tokens_per_second_code": 27.13,
+      "tokens_per_second_varied": 21.51,
+      "ttft_seconds": 0.376,
+      "partial": false
+    },
+    "1.0": {
+      "mtp_acceptance_code": 0.7564,
+      "mtp_acceptance_varied": 0.5689,
+      "mean_acceptance_length": 3.269,
+      "tokens_per_second_code": 26.14,
+      "tokens_per_second_varied": 20.75,
+      "ttft_seconds": 0.375,
+      "partial": false
+    },
+    "1.5": {
+      "mtp_acceptance_code": 0.6904,
+      "mtp_acceptance_varied": 0.554,
+      "mean_acceptance_length": 3.071,
+      "tokens_per_second_code": 24.23,
+      "tokens_per_second_varied": 21.48,
+      "ttft_seconds": 0.373,
+      "partial": true,
+      "partial_reason": "four of five clean prompts per family after external-load retry exhaustion"
+    },
+    "2.5": {
+      "status": "invalid",
+      "reason": "operational_timeout_and_generation_runaway",
+      "elapsed_seconds_before_stop": 1566,
+      "score_assigned": false
+    }
+  },
+  "tooling": {
+    "0.0": "7/8",
+    "1.0": "7/8",
+    "1.5": "6/8",
+    "2.5": "invalid"
+  },
+  "long_context": {
+    "status": "inconclusive",
+    "planned_lengths": [32768, 131072],
+    "reason": "external_runtime_saturation",
+    "elapsed_seconds_before_stop": 1860,
+    "score_assigned": false
+  },
+  "goldhub_published_comparison": {
+    "source_model": "goldhub/Qwen3.8-27B-INT4-W4A16-AutoRound",
+    "source_log_date": "2026-08-14",
+    "generation_tests": 8,
+    "mean_tokens_per_second": 54.62125,
+    "median_tokens_per_second": 60.855,
+    "range_tokens_per_second": [12.65, 70.24],
+    "weighted_mtp_acceptance": 0.6973914313,
+    "mtp_acceptance_range_by_task": [0.3959844692, 0.9075551967],
+    "tensor_bytes": 27995740640,
+    "our_tensor_bytes": 23417592488,
+    "goldhub_size_delta_vs_ours": 0.1955,
+    "quantized_layers": 256,
+    "total_quantizable_layers": 607,
+    "same_hardware_runtime_workload_as_ours": false,
+    "comparable_speed_ab": false,
+    "published_refusal_benchmark_samples": 0
+  },
+  "recommendation": {
+    "qwen38_production_lambda": 1.0,
+    "deepseek_v4_production_lambda": 1.5,
+    "do_not_use_qwen38_lambda": [2.5],
+    "reason": "lambda 1 removes strict refusals with no statistically detectable quality loss in these samples; lambda 1.5 significantly degrades quality; lambda 2.5 restores refusal and triggers runaway generation"
+  }
+}

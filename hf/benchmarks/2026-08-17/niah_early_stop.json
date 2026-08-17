@@ -1,0 +1,21 @@
+{
+  "phase": "niah_32k_128k",
+  "lambda_at_stop": 0.0,
+  "reason": "external_runtime_saturation",
+  "elapsed_seconds_at_stop": 1860,
+  "planned_cells_per_lambda": 10,
+  "planned_requests_per_lambda": 30,
+  "result_written": false,
+  "observed_load_at_stop": {
+    "running": 5,
+    "waiting": 1,
+    "e2e_completed_before_observation": 4344,
+    "e2e_completed_after_60_seconds": 4344
+  },
+  "policy": "reported inconclusive; no retrieval score is assigned",
+  "restored": {
+    "lambda": 1.0,
+    "consistent": true,
+    "per_rank": [1.0]
+  }
+}

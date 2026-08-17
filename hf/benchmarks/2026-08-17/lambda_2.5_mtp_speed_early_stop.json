@@ -1,0 +1,18 @@
+{
+  "lambda": 2.5,
+  "phase": "speed_and_mtp",
+  "started_at": "2026-08-17T21:14:24+02:00",
+  "stopped_at": "2026-08-17T21:40:30+02:00",
+  "reason": "operational_timeout_and_generation_runaway",
+  "max_tokens": 600,
+  "requested_prompts": 10,
+  "elapsed_seconds_at_stop": 1566,
+  "aggregate_completed": false,
+  "policy": "early stop after one isolated arm exceeded 20 minutes; no acceptance or speed value is assigned",
+  "corroborating_quality_failure": "../quality_4lambda/lambda_2.5_early_stop.json",
+  "restored": {
+    "lambda": 1.0,
+    "consistent": true,
+    "per_rank": [1.0]
+  }
+}

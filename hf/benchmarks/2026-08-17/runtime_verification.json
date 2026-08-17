@@ -1,0 +1,16 @@
+{
+  "verified_at": "2026-08-17T22:42:50+02:00",
+  "refusal_lambda": {
+    "lambda": 1.0,
+    "consistent": true,
+    "per_rank": [
+      1.0
+    ]
+  },
+  "checkpoint": {
+    "model": "unsloth/Qwen3.8-27B-NVFP4",
+    "revision": "7d6f8d4d72f56b92b3cdbf22f156b90e1bab0108",
+    "mounted_safetensors_bytes": 23417592488,
+    "mounted_safetensors_gib": 21.81
+  }
+}

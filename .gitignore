@@ -1,2 +1,4 @@
 __pycache__/
 *.pyc
+bench/comprehensive/results*/
+bench/comprehensive/strongreject_*/

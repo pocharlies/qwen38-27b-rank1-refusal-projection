@@ -1,0 +1,187 @@
+{
+  "source": {
+    "model": "goldhub/Qwen3.8-27B-INT4-W4A16-AutoRound",
+    "published_log_date": "2026-08-14"
+  },
+  "reported_speed": {
+    "tests": [
+      {
+        "number": 1,
+        "name": "speed_baseline",
+        "max_tokens": 2048,
+        "temperature": 0.6,
+        "duration_s": 5.627424941,
+        "prompt_tokens": 30,
+        "output_tokens": 319,
+        "reported_tok_s": 56.68,
+        "finish": "stop",
+        "mtp": {
+          "start": "16:05:39",
+          "end": "16:05:45",
+          "samples": 7,
+          "draft_tokens_sampled": 299.0,
+          "accepted_tokens_sampled": 210.3,
+          "weighted_acceptance": 0.7033444816053512,
+          "mean_instant_acceptance": 0.7357142857142857
+        }
+      },
+      {
+        "number": 2,
+        "name": "reasoning_math",
+        "max_tokens": 4096,
+        "temperature": 0.6,
+        "duration_s": 23.481375528,
+        "prompt_tokens": 110,
+        "output_tokens": 1527,
+        "reported_tok_s": 65.03,
+        "finish": "stop",
+        "mtp": {
+          "start": "16:05:47",
+          "end": "16:06:10",
+          "samples": 24,
+          "draft_tokens_sampled": 1313.2,
+          "accepted_tokens_sampled": 1072.9,
+          "weighted_acceptance": 0.8170118793786172,
+          "mean_instant_acceptance": 0.8195833333333333
+        }
+      },
+      {
+        "number": 3,
+        "name": "code",
+        "max_tokens": 16384,
+        "temperature": 0.6,
+        "duration_s": 81.91180491,
+        "prompt_tokens": 81,
+        "output_tokens": 4251,
+        "reported_tok_s": 51.89,
+        "finish": "stop",
+        "mtp": {
+          "start": "16:06:19",
+          "end": "16:07:34",
+          "samples": 76,
+          "draft_tokens_sampled": 4210.3,
+          "accepted_tokens_sampled": 2849.5,
+          "weighted_acceptance": 0.6767926276037337,
+          "mean_instant_acceptance": 0.6738157894736843
+        }
+      },
+      {
+        "number": 4,
+        "name": "creative_ru",
+        "max_tokens": 8192,
+        "temperature": 0.9,
+        "duration_s": 282.813075056,
+        "prompt_tokens": 77,
+        "output_tokens": 3580,
+        "reported_tok_s": 12.65,
+        "finish": "stop",
+        "mtp": {
+          "start": "16:10:56",
+          "end": "16:12:19",
+          "samples": 84,
+          "draft_tokens_sampled": 4738.2,
+          "accepted_tokens_sampled": 2022.0,
+          "weighted_acceptance": 0.4267443332911232,
+          "mean_instant_acceptance": 0.42833333333333334
+        }
+      },
+      {
+        "number": 5,
+        "name": "long_ctx",
+        "max_tokens": 4096,
+        "temperature": 0.6,
+        "duration_s": 56.971200721,
+        "prompt_tokens": 348,
+        "output_tokens": 4002,
+        "reported_tok_s": 70.24,
+        "finish": "stop",
+        "mtp": {
+          "start": "16:12:21",
+          "end": "16:13:18",
+          "samples": 58,
+          "draft_tokens_sampled": 3220.3,
+          "accepted_tokens_sampled": 2922.6,
+          "weighted_acceptance": 0.9075551967208023,
+          "mean_instant_acceptance": 0.9093103448275862
+        }
+      },
+      {
+        "number": 6,
+        "name": "instruction",
+        "max_tokens": 4096,
+        "temperature": 0.6,
+        "duration_s": 53.938318994,
+        "prompt_tokens": 126,
+        "output_tokens": 3753,
+        "reported_tok_s": 69.57,
+        "finish": "stop",
+        "mtp": {
+          "start": "16:13:20",
+          "end": "16:14:14",
+          "samples": 55,
+          "draft_tokens_sampled": 3098.3,
+          "accepted_tokens_sampled": 2715.9,
+          "weighted_acceptance": 0.876577477971791,
+          "mean_instant_acceptance": 0.87
+        }
+      },
+      {
+        "number": 7,
+        "name": "mtp_stress",
+        "max_tokens": 2048,
+        "temperature": 0.6,
+        "duration_s": 28.910857782,
+        "prompt_tokens": 45,
+        "output_tokens": 1980,
+        "reported_tok_s": 68.48,
+        "finish": "stop",
+        "mtp": {
+          "start": "16:14:16",
+          "end": "16:14:45",
+          "samples": 30,
+          "draft_tokens_sampled": 1666.1,
+          "accepted_tokens_sampled": 1425.2,
+          "weighted_acceptance": 0.8554108396854931,
+          "mean_instant_acceptance": 0.84
+        }
+      },
+      {
+        "number": 8,
+        "name": "heretic",
+        "max_tokens": 8192,
+        "temperature": 1.0,
+        "duration_s": 68.288355097,
+        "prompt_tokens": 92,
+        "output_tokens": 2898,
+        "reported_tok_s": 42.43,
+        "finish": "stop",
+        "mtp": {
+          "start": "16:14:48",
+          "end": "16:15:55",
+          "samples": 68,
+          "draft_tokens_sampled": 3914.8,
+          "accepted_tokens_sampled": 1550.2,
+          "weighted_acceptance": 0.3959844691938285,
+          "mean_instant_acceptance": 0.39970588235294113
+        }
+      }
+    ],
+    "mean_tok_s": 54.621249999999996,
+    "median_tok_s": 60.855000000000004,
+    "min_tok_s": 12.65,
+    "max_tok_s": 70.24
+  },
+  "mtp_global_sampled": {
+    "samples": 597,
+    "draft_tokens_sampled": 32880.1,
+    "accepted_tokens_sampled": 22930.3,
+    "weighted_acceptance": 0.6973914312912673
+  },
+  "checkpoint": {
+    "tensor_bytes": 27995740640,
+    "chat_template_bytes": 19262,
+    "quantized_layers": 256,
+    "total_quantizable_layers": 607,
+    "mtp_missing_then_rtn_quantized": true
+  }
+}
