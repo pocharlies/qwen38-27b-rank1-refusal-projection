@@ -1,0 +1,70 @@
+# Qwen3.8-27B rank1g: lambda POR PETICION vivo bajo grafo CUDA.
+#
+# OVERLAY sobre la imagen que ya despliega Qwen, no rebuild desde la base. El
+# Dockerfile del repo dice que parte del upstream publico limpio, pero la imagen
+# desplegada NO se construyo asi: su arbol ya trae el cableado del productor
+# (sched/output.py, gpu_input_batch.py, los dos model_runner y refusal_utils.py).
+# Reconstruir desde el upstream publico perderia eso.
+#
+# Los cuatro ficheros se sacaron del contenedor de esa misma imagen y se editaron
+# encima, asi que sobrescribirlos no puede pisar nada ajeno.
+#
+# EL CONTEXTO ES PLANO: los COPY de abajo no llevan ruta, asi que hay que juntar
+# los ficheros en un directorio suelto. Todos estan en este repo:
+#
+#   mkdir ctx && cd ctx
+#   cp ../vllm/refusal_projection.py          refusal_projection.py
+#   cp ../vllm/v1/worker/gpu/refusal_utils.py refusal_utils.py
+#   cp ../vllm/v1/worker/gpu/model_runner.py  model_runner.py
+#   cp ../vllm/models_qwen3_5.py              qwen3_5.py
+#   cp ../tools/test_per_request.py ../deploy/Dockerfile.rank1g .
+#
+# Los otros dos ficheros del productor (vllm/v1/core/sched/output.py y
+# vllm/v1/worker/gpu_input_batch.py) NO se copian: la imagen base ya los trae
+# cableados. Estan en el repo para leerlos, no para sobrescribirlos.
+ARG BASE=registry.lan.internal/homelab/vllm-qwen38-rank1:20260815d-arm64
+FROM ${BASE}
+
+ARG SITE=/usr/local/lib/python3.12/dist-packages/vllm
+
+COPY refusal_projection.py   ${SITE}/refusal_projection.py
+COPY refusal_utils.py        ${SITE}/v1/worker/gpu/refusal_utils.py
+COPY model_runner.py         ${SITE}/v1/worker/gpu/model_runner.py
+COPY qwen3_5.py              ${SITE}/model_executor/models/qwen3_5.py
+COPY test_per_request.py /opt/refusal/test_per_request.py
+
+RUN cd ${SITE} && python3 -m py_compile \
+      refusal_projection.py \
+      v1/worker/gpu/refusal_utils.py \
+      v1/worker/gpu/model_runner.py \
+      model_executor/models/qwen3_5.py \
+ && echo "rank1g-qwen: compilado"
+
+# El guard de arranque del repo es fail-closed y exige una superficie concreta de
+# refusal_projection (la que importa el arbol base desde tres ficheros que no son
+# de este modelo). Si el port se hubiera llevado por delante alguno de esos
+# nombres, el pod no arrancaria — mejor enterarse aqui que en el rollout.
+RUN cd /tmp && python3 -c "\
+import vllm.refusal_projection as rp; \
+from vllm.v1.worker.gpu.refusal_utils import RefusalState; \
+from vllm.model_executor.models import qwen3_5; \
+req = ('is_enabled','set_lambda','get_lambda','lambda_hash_key', \
+       'parse_request_lambda','set_per_token_lambda','get_per_token_lambda', \
+       'RefusalProjection','resolve_direction','verify_all_consumed'); \
+missing = [n for n in req if not hasattr(rp, n)]; \
+assert not missing, missing; \
+assert hasattr(rp,'ensure_buffers') and hasattr(rp,'get_buffer') and hasattr(rp,'fill'); \
+assert rp.ROLE_TARGET != rp.ROLE_DRAFT; \
+assert hasattr(RefusalState,'fill_target') and hasattr(RefusalState,'fill_draft_neutral'); \
+assert not rp.is_enabled(), 'el hook no debe estar activo por defecto'; \
+print('rank1g-qwen build-check OK', vllm.__version__ if False else '')"
+
+# Bloques A, B y E: no necesitan GPU, asi que se cobran en el build. Los bloques
+# del replay de grafo (C) y de compilacion (D) SI necesitan GPU y se saltan solos
+# aqui: van en job-verify-per-request.yaml. Esta linea no acredita el
+# arreglo entero, solo que no esta roto de base.
+RUN cd /tmp && VLLM_REFUSAL_DIRS=/opt/refusal/refusal_dirs_qwen38.safetensors \
+    python3 /opt/refusal/test_per_request.py
+
+LABEL dgx-infra.rank1.fix="qwen per-request lambda: buffers por rol atados al modulo (fullgraph-safe)"
+LABEL dgx-infra.rank1.base="vllm-qwen38-rank1:20260815d-arm64"

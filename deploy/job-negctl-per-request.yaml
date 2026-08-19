@@ -1,0 +1,39 @@
+# Bloques C (replay de grafo CUDA) y D (compilacion) del port rank1g a Qwen.
+# Sin GPU se saltan solos, asi que el build NO los acredita. El bloque D es el
+# que no existe en DeepSeek: mide si leer el buffer desde el forward fullgraph
+# recompila. Era el unico riesgo que no se podia prometer por adelantado.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qwen38-negctl
+  namespace: llm
+  labels: { rank1.dgx-infra/window: qwen-per-request-lambda-20260818 }
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: qwen38-negctl
+        rank1.dgx-infra/window: qwen-per-request-lambda-20260818
+    spec:
+      restartPolicy: Never
+      runtimeClassName: nvidia
+      # No usa el checkpoint: las 128 direcciones (2,6 MB) ya estan en la imagen.
+      nodeSelector: { kubernetes.io/arch: arm64, kubernetes.io/hostname: nvidia-dgx }
+      tolerations: [{ operator: Exists }]
+      containers:
+        - name: verify
+          image: registry.lan.internal/homelab/vllm-qwen38-rank1:20260818-rank1g-arm64
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "/rank1/negctl_per_request.py"]
+          env:
+            - { name: PYTHONUNBUFFERED, value: "1" }
+            - { name: VLLM_REFUSAL_DIRS, value: /opt/refusal/refusal_dirs_qwen38.safetensors }
+          resources:
+            requests: { cpu: "2", memory: 4Gi }
+            limits: { cpu: "8", memory: 16Gi, nvidia.com/gpu: 1 }
+          volumeMounts: [{ name: rank1, mountPath: /rank1 }]
+      volumes:
+        - name: rank1
+          configMap: { name: qwen38-negctl }
