@@ -14,13 +14,23 @@ tags:
 library_name: safetensors
 ---
 
-# Qwen3.8-27B — rank-1 refusal directions
+# Qwen3.8-27B — Uncensored on demand
 
-**2.6 MB instead of a second 23 GB checkpoint.** 128 unit vectors in ℝ⁵¹²⁰ that let you serve
-the *clean* `Qwen/Qwen3.8-27B` and turn abliteration on and off at runtime with a single HTTP
-call — no restart, no second copy on disk, and `λ=0` bit-exact to the original.
+> **A censored model that uncensors itself when you ask it to — and nothing else changes.**
+
+No second 23 GB checkpoint. No baked-in abliterated weights. This is a **2.6 MB pack of
+direction vectors** that plugs into a running vLLM and lets you dial the model's refusal
+behaviour up or down **at runtime, per request, with zero restart**:
+
+| you ask | the model behaves as |
+|---|---|
+| `λ=0` (default) | the **original** `Qwen/Qwen3.8-27B` — bit-exact, censored |
+| `λ=1` | the **abliterated** profile — refusals drop 32/60 → 0/60 (StrongREJECT) |
+
+The same weights, the same pod, even the same batch. One HTTP field switches it.
 
 ```bash
+# server-wide dial
 curl -XPOST localhost:8888/admin/refusal_lambda -d '{"lambda": 1}'   # ablation on
 curl -XPOST localhost:8888/admin/refusal_lambda -d '{"lambda": 0}'   # off, bit-exact base
 ```
@@ -42,6 +52,30 @@ mutating the buffer does not recompile). Details and the failing-capable tests a
 GitHub README.
 
 Code, patch and benchmarks: **https://github.com/pocharlies/qwen38-27b-rank1-refusal-projection**
+
+---
+
+## Responsibility & intended use
+
+> **Read before downloading.** This material removes or weakens a model's built-in refusal
+> behaviour on demand. It can make a model answer requests it would otherwise decline — some
+> of them clearly harmful.
+
+- **Intended use.** Research on interpretability, activation steering and refusal mechanisms
+  (e.g. Arditi et al. 2024), safety evaluation, and legitimate creative/role-play use cases
+  that fall inside your own jurisdiction and terms of service.
+- **Not intended for.** Generating malicious content, fraud, harassment, disinformation,
+  malware, or anything that harms people. No safeguard in this repo will stop those uses; the
+  guardrail is you.
+- **Legal & policy.** The operator of the model is solely responsible for the outputs and for
+  compliance with their local law and the hosting/API terms. This repo is not legal advice.
+- **The code is the easy part; the deployment is the risk.** λ>0 also lowers resistance to
+  *prompt injection* — do not expose an uncensored alias to content you do not trust (scraped
+  text, inbound mail). Keep `/admin/refusal_lambda` off any public ingress.
+- **License.** Apache-2.0 code; the vectors derive from publicly released checkpoints and
+  inherit the Qwen license. Use at your own risk.
+
+---
 
 ## What is in the file
 
@@ -256,6 +290,46 @@ checkpoint anywhere. Set `container:` to your own build of the Dockerfile in the
 
 Two lines in it are load-bearing: `pre_exec` runs the fail-closed guard **before** serving, and
 `--attention-backend triton_attn` is not optional on vLLM 0.25.2 — see below.
+
+## Exposing it through LiteLLM: two profiles, one pod
+
+The cleanest way to use *uncensored on demand* in a real deployment is a **LiteLLM proxy**
+in front of the vLLM pod. Register the model **twice** under two aliases that point to the
+*same* backend — the only difference is an `extra_body.cache_salt` that switches λ per request:
+
+```yaml
+model_list:
+  - model_name: qwen38-27b              # censored profile (default behaviour)
+    litellm_params:
+      model: openai/qwen38-27b
+      api_base: http://vllm-qwen38.llm.svc.cluster.local:8000/v1   # your vLLM pod
+  - model_name: qwen38-27b-uncensored   # uncensored on demand
+    litellm_params:
+      model: openai/qwen38-27b
+      api_base: http://vllm-qwen38.llm.svc.cluster.local:8000/v1   # same pod!
+      extra_body: { cache_salt: "refusal:1.0" }
+```
+
+- `qwen38-27b` (no `cache_salt`) → vLLM uses the global dial, which boots at `λ=0` → the
+  **original** censored model. Bit-exact.
+- `qwen38-27b-uncensored` (sends `cache_salt: refusal:1.0` per request) → vLLM expands that
+  into a per-token λ → the **abliterated** profile.
+- Both aliases hit the same Service, same checkpoint, same GPU, even the same batch. There is
+  no second server. Switching a client from one alias to the other is a one-word change in
+  their `model:` field.
+
+Cost and security of doing it this way:
+
+- `cache_salt` enters the prefix-cache block key, so the two aliases keep **separate KV cache
+  spaces**. That lowers hit rate slightly — and it is the correct behaviour: you do not want a
+  censored request to reuse a block computed under an uncensored λ.
+- Gate the uncensored alias by API key in LiteLLM (`team`/`key` model access), so only the
+  callers you trust can reach `qwen38-27b-uncensored`. This is how production isolates it from
+  write-capable tools.
+
+> Verified in production on this exact pattern (same Service, `extra_body.cache_salt`,
+> per-request λ surviving LiteLLM and CUDA-graph replay). The DeepSeek-V4 twin uses the same
+> mechanism at `refusal:1.5`.
 
 ## Serving by hand
 

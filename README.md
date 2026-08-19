@@ -336,6 +336,36 @@ Two things in that file are load-bearing, not stylistic:
 `VLLM_REFUSAL_LAMBDA_INIT` is `0.0`: it comes up **censored**, and uncensored is something you
 turn on.
 
+### LiteLLM: two profiles, one pod
+
+Register the same backend twice in LiteLLM; the only difference is an `extra_body.cache_salt`
+that switches λ per request. This is the *uncensored on demand* pattern, verified in
+production (same Service, λ surviving LiteLLM and CUDA-graph replay; the DeepSeek-V4 twin
+uses the same mechanism at `refusal:1.5`):
+
+```yaml
+model_list:
+  - model_name: qwen38-27b              # censored profile (default behaviour)
+    litellm_params:
+      model: openai/qwen38-27b
+      api_base: http://vllm-qwen38.llm.svc.cluster.local:8000/v1   # your vLLM pod
+  - model_name: qwen38-27b-uncensored   # uncensored on demand
+    litellm_params:
+      model: openai/qwen38-27b
+      api_base: http://vllm-qwen38.llm.svc.cluster.local:8000/v1   # same pod!
+      extra_body: { cache_salt: "refusal:1.0" }
+```
+
+- `qwen38-27b` (no salt) → global dial, boots at `λ=0` → the **original** model. Bit-exact.
+- `qwen38-27b-uncensored` → vLLM expands `cache_salt: refusal:1.0` into a per-token λ → the
+  **abliterated** profile.
+- Same checkpoint, same GPU, same batch — switching a client is a one-word `model:` change.
+- `cache_salt` enters the prefix-cache block key, so the two aliases keep **separate KV cache
+  spaces** (slightly lower hit rate, and correct: you don't want censored requests reusing
+  blocks computed under an uncensored λ).
+- Gate the uncensored alias by LiteLLM API key (`team`/`key` model access) so only trusted
+  callers can reach it — see §10.
+
 ---
 
 ## 7. Reproducing it
@@ -558,3 +588,14 @@ The better the dial works, the more the isolation matters.
 
 Code: Apache-2.0. The direction vectors are derived from the difference between two publicly
 released checkpoints and inherit the Qwen license.
+
+## Responsibility
+
+This material removes or weakens a model's built-in refusal behaviour **on demand**, which can
+make it answer requests it would otherwise decline — some of them clearly harmful. It is
+intended for interpretability and safety research and legitimate creative/role-play use
+falling inside your jurisdiction and terms of service, **not** for generating malicious,
+fraudulent, harassing or harmful content. The operator is solely responsible for outputs and
+for legal/policy compliance; λ>0 also lowers resistance to prompt injection, so do not expose
+an uncensored alias to untrusted content or to write-capable tools (see §10). Use at your own
+risk.
