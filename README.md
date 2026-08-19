@@ -59,6 +59,59 @@ curl -XPOST localhost:8888/admin/refusal_lambda -d '{"lambda": 0}'   # ablation 
 It takes effect on the **next request**. λ=0 is bit-exact to the unmodified model — when the
 dial is at zero it *is* the original.
 
+### Per-request λ — added 2026-08-19
+
+The dial above is server-wide. λ now also travels **per request**, so the same pod can serve
+a normal alias and an ablated one from the same weights **in the same batch**:
+
+```bash
+curl -XPOST localhost:8888/v1/chat/completions -d '{
+  "model": "qwen38-27b", "messages": [...], "cache_salt": "refusal:1.0" }'
+```
+
+Requests without a salt keep using the global dial. λ enters the prefix-cache block key, so
+the two aliases have separate KV cache spaces by design — that costs hit rate, and it is the
+correct behaviour: you do not want them sharing blocks.
+
+**Why this was documented as dead until now, and what it took.** The naive implementation is
+silently wrong: `capture_model` never goes through `execute_model`, so at capture time the
+per-token tensor is `None` and the branch traced *into the CUDA graph* is the global scalar.
+Replay executes no Python, so every graph-served decode used the global λ forever — with no
+warning of any kind.
+
+The fix is a persistent buffer per role, allocated in the runner's `__init__` (before
+`capture_model`) and always mutated in place. **On this model there is one extra constraint
+that does not exist on DeepSeek:** the decoder-layer forward lives *inside* Dynamo's
+`fullgraph` region, where reading a mutable global forces recompilation — this repo's own
+code warned about exactly that. So the buffer is bound to the **module** at construction
+(`self._tok`) and the forward only does `self._tok[:n]`: a slice of a tensor attribute, no
+globals, no lock.
+
+Verified on GPU, and the tests are written so they can fail:
+
+```
+PASS  compiles with fullgraph=True (no graph break)
+PASS  compiles exactly once                        frames=1
+PASS  changing the buffer CONTENTS does not recompile   frames 1 -> 1
+PASS  the COMPILED forward applies the per-request lambda   err_max=1.672e-03
+PASS  replay sees the lambda written AFTER capture          err_max=1.650e-03
+PASS  mixed batch under replay: each request with ITS lambda
+PASS  the draft module reads ITS buffer, not the target's
+```
+
+Negative control: rebuild the old behaviour (buffers absent at capture) and replay reports
+`reflects the per-request lambda: False`. On the live pod: 128/128 directions claimed and
+**zero** shape-mismatch warnings at boot.
+
+**The MTP drafter stays on the global λ, deliberately.** With `VLLM_REFUSAL_MTP_MODE=off` it
+carries no projection at all, so this changes nothing today. If MTP ablation were switched
+on, the autoregressive drafter has *two* different row layouts (first pass sized like the
+target, decode steps one row per request) and a single buffer cannot serve both without
+guessing. Guessing wrong would mean applying one request's λ to another — the exact failure
+this mechanism exists to eliminate. Rejection sampling means the accepted tokens follow the
+*target's* distribution regardless, so an unaligned drafter costs acceptance, not
+correctness.
+
 ---
 
 ## 1. The identity everything rests on

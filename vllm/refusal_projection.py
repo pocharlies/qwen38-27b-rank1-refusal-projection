@@ -54,10 +54,25 @@ caliente no hace absolutamente nada — sin error, simplemente no pasa nada.
 ACTIVACION. Sin VLLM_REFUSAL_DIRS el hook no existe: no se construye el modulo y el
 forward no lleva ni una rama extra. Ese es el rollback sin rebuild.
 
-LAMBDA POR PETICION. NO se implementa. En DeepSeek se intento con `cache_salt` y esta
-documentado como muerto (analysis/deepseek-v4-flash-2xspark/rank1/DIAGNOSTICO-lambda-por-
-peticion.md): la captura de grafos CUDA hornea el lam global y el stride del drafter no
-cuadra. El dial es global de servidor.
+LAMBDA POR PETICION. Implementado desde 2026-08-19 y verificado en GPU. Viaja en
+`cache_salt: "refusal:<x>"`, asi que un mismo pod puede servir un alias normal y otro
+ablado con los mismos pesos y en el mismo lote.
+
+Antes NO funcionaba, y el motivo merece quedar escrito porque el fallo era MUDO:
+`capture_model` no pasa por `execute_model`, asi que durante la captura el tensor por
+token era None y lo que quedaba trazado DENTRO del grafo era el escalar global. En replay
+no corre ni una linea de Python, de modo que todo decode servido por grafo usaba el lambda
+global para siempre, sin un solo aviso.
+
+El arreglo es un buffer PERSISTENTE por rol, creado en el __init__ del runner (o sea antes
+de `capture_model`) y mutado siempre in-place. Aqui hay una diferencia con DeepSeek que no
+es cosmetica: el forward de este modelo vive DENTRO de la region compilada por Dynamo
+(fullgraph), donde leer un global mutable provoca recompilaciones. Por eso el buffer se ata
+al MODULO en la construccion (`self._tok`) y el forward solo hace `self._tok[:n]`, un slice
+de un atributo tensor: cero globals, cero lock. Medido en GPU: compila una sola vez
+(frames=1) y cambiar el CONTENIDO del buffer no recompila.
+
+El dial global de /admin/refusal_lambda sigue existiendo y manda sobre quien no trae sello.
 """
 
 from __future__ import annotations
@@ -91,25 +106,148 @@ ENV_LAMBDA = "VLLM_REFUSAL_LAMBDA_INIT"
 # `off` en el mismo pod y la misma hora.
 ENV_MTP_MODE = "VLLM_REFUSAL_MTP_MODE"
 
-# --- superficie POR PETICION: se conserva aunque no funcione ------------------
+# --- superficie POR PETICION -------------------------------------------------
 #
-# El lambda por peticion viaja en `cache_salt` con el formato "refusal:<float>". Esta
-# documentado como MUERTO en
-# analysis/deepseek-v4-flash-2xspark/rank1/DIAGNOSTICO-lambda-por-peticion.md: la captura
-# de grafos CUDA hornea el lambda global (capture_model no pasa por execute_model) y el
-# drafter avanza en multiplos de k mientras el target avanza en 1+k, asi que el tensor
-# por token nunca casa con las filas de `y`.
+# El lambda por peticion viaja en `cache_salt` con el formato "refusal:<float>". Lo parsea
+# v1/core/sched/output.py y lo llevan hasta el runner gpu_input_batch.py y
+# v1/worker/gpu/model_runner.py, que rellenan el buffer del rol correspondiente.
 #
-# Pero estas funciones NO se pueden borrar: el arbol de la imagen base las llama desde
-# tres sitios que no son de este modelo —v1/core/sched/output.py, v1/worker/gpu/
-# model_runner.py y v1/worker/gpu_model_runner.py— y quitarlas rompe el arranque con un
-# ImportError. Lo cazo el guard de arranque en el primer intento, que para eso esta.
+# El slot `_per_token` de abajo es el camino LEGACY del Model Runner V1, que fija un tensor
+# por paso. El V2 —el que arranca este despliegue— no lo usa: lee el buffer atado al modulo.
+# Se conserva porque el arbol de la imagen base lo importa y quitarlo rompe el arranque con
+# un ImportError desde un fichero que no tiene nada que ver.
 #
-# Asi que se mantienen con el comportamiento del original: si el runner deja un tensor
-# por token y las formas casan, se usa; si no casan, se avisa UNA vez y se cae al global.
+# Comportamiento ante un layout inesperado: se avisa UNA vez y se cae al lambda GLOBAL.
+# Nunca al lambda de otra peticion — un fallo fail-safe, no una mezcla silenciosa.
 SALT_PREFIX = "refusal:"
 
 _per_token: torch.Tensor | None = None
+
+# --- lambda POR PETICION, vivo bajo grafo CUDA (port de rank1g) ---------------
+#
+# Lo de arriba describe el mecanismo ROTO. Esto es el arreglo, portado del de
+# DeepSeek pero ADAPTADO a la restriccion que aqui es dura: el forward de este
+# modelo vive dentro de una region FULLGRAPH de Dynamo.
+#
+# QUE FALLABA. Tres cosas, y solo una gritaba en el log:
+#   1. `capture_model` no pasa por `execute_model`: en la captura el slot por
+#      token era None y lo que se TRAZABA dentro del grafo era el escalar global.
+#      En replay no corre Python, asi que todo decode servido por grafo aplicaba
+#      el global para siempre, sin un aviso.
+#   2. Target y drafter tienen layouts de fila distintos.
+#   3. El slot no se limpiaba: los dummy runs leian el tensor rancio.
+#
+# COMO SE ARREGLA AQUI, Y EN QUE SE DIFERENCIA DE DEEPSEEK. Un buffer persistente
+# por rol, creado en el __init__ del runner (antes de capture_model) y mutado
+# SIEMPRE in-place: la captura hornea el puntero y el tamano, cada paso reescribe
+# el contenido.
+#
+# La diferencia esta en COMO lo lee el forward. En DeepSeek el forward llama a
+# `view_for(role, n)`, que indexa una lista global de modulo. Aqui eso NO vale:
+# este forward es fullgraph y leer estado Python mutable desde dentro provoca
+# recompilaciones — es la misma razon por la que este fichero ya movia r_hat al
+# device en el constructor en vez de perezosamente. Asi que el buffer se ATA AL
+# MODULO en la construccion (`self._tok`) y el forward solo hace `self._tok[:n]`:
+# un slice de un atributo tensor. Cero globals, cero lock, cero dict.
+ROLE_TARGET = 0
+ROLE_DRAFT = 1
+ROLE_NAMES = ("target", "draft")
+_N_ROLES = 2
+
+_buf: list[torch.Tensor | None] = [None] * _N_ROLES
+
+
+def ensure_buffers(max_num_tokens: int, device: torch.device) -> None:
+    """Crea los buffers por rol. DEBE llamarse ANTES de construir el modelo.
+
+    El orden importa dos veces: antes de `capture_model` (si no, el grafo hornea
+    el escalar) y antes de que se construyan las capas (si no, `RefusalProjection`
+    no tiene buffer que atarse y cae al global para siempre). El runner lo cumple
+    solo: crea `RefusalState` en su __init__ y carga el modelo despues.
+
+    `inference_mode(False)` por lo mismo que el tensor de lambda global: un tensor
+    nacido en inference mode no admite mutacion in-place despues.
+    """
+    if not is_enabled():
+        return
+    with _lock:
+        for role in (ROLE_TARGET, ROLE_DRAFT):
+            if _buf[role] is None:
+                with torch.inference_mode(False):
+                    _buf[role] = torch.full(
+                        (max_num_tokens,),
+                        float(_lam_value),
+                        dtype=torch.float32,
+                        device=device,
+                    )
+        logger.info(
+            "refusal projection: buffers por rol listos (%d tokens, %s)",
+            max_num_tokens,
+            device,
+        )
+
+
+def get_buffer(role: int) -> torch.Tensor | None:
+    """Buffer del rol. Se llama en la CONSTRUCCION del modulo, nunca en el forward."""
+    return _buf[role]
+
+
+def fill(role: int, tok: torch.Tensor, global_lambda: float) -> None:
+    """Escribe `tok` en las filas reales y el lambda global en el resto.
+
+    Las filas de padding llevan el global, y eso es lo que hace que cualquier
+    n >= n_real sea semanticamente correcta — o sea lo que hace que el arreglo
+    sobreviva al padding de los grafos.
+    """
+    buf = _buf[role]
+    if buf is None:
+        return
+    n = int(tok.shape[0])
+    cap = int(buf.shape[0])
+    if n > cap:
+        # Fail-safe: no se recorta. Recortar significaria aplicar a una peticion
+        # el lambda de OTRA. Se deja el buffer al global.
+        _warn_capacity(role, n, cap)
+        fill_neutral(role, global_lambda)
+        return
+    with torch.inference_mode(False):
+        buf[:n].copy_(tok, non_blocking=True)
+        if cap > n:
+            buf[n:].fill_(float(global_lambda))
+
+
+def fill_neutral(role: int, global_lambda: float) -> None:
+    """Todo el buffer al lambda global. Para dummy/profile runs y para el drafter.
+
+    Sin esto un dummy run consume el contenido RANCIO del ultimo paso real.
+    """
+    buf = _buf[role]
+    if buf is None:
+        return
+    with torch.inference_mode(False):
+        buf.fill_(float(global_lambda))
+
+
+_warned_capacity: set[tuple[int, int, int]] = set()
+
+
+def _warn_capacity(role: int, want: int, cap: int) -> None:
+    """Unico desajuste que sigue siendo posible con buffers por rol.
+
+    Si aparece, el lote pide mas filas de las que el buffer tiene y se cae al
+    lambda GLOBAL. Significa que `max_num_tokens` no acota el forward de ese rol
+    — supuesto roto, no un caso normal.
+    """
+    key = (role, want, cap)
+    if key not in _warned_capacity:
+        _warned_capacity.add(key)
+        logger.warning(
+            "refusal projection: rol %s pide %d filas pero el buffer tiene %d; "
+            "se usa el lambda GLOBAL. La seleccion por peticion NO esta actuando.",
+            ROLE_NAMES[role],
+            want,
+            cap,
+        )
 
 
 def parse_request_lambda(cache_salt: str | None) -> float | None:
@@ -159,10 +297,8 @@ _dirs: dict[str, torch.Tensor] | None = None
 _coefs: dict[str, float] | None = None
 _consumed: set[str] = set()
 _seen_prefixes: set[str] = set()
+_lam_by_device: dict[torch.device, torch.Tensor] = {}
 _lam_value: float = 0.0
-
-# Todas las proyecciones vivas. `set_lambda` las recorre y rellena su buffer in-place.
-_instances: list["RefusalProjection"] = []
 
 
 def _load_dirs(path: str) -> tuple[dict[str, torch.Tensor], dict[str, float]]:
@@ -233,22 +369,39 @@ def is_enabled() -> bool:
     return bool(os.environ.get(ENV_DIRS))
 
 
-def set_lambda(value: float) -> float:
-    """Muta lam IN-PLACE en TODAS las capas. Seguro con grafos CUDA ya capturados.
+def get_lambda_tensor(device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+    """Tensor de lam por device, COMPARTIDO por todas las capas y mutado in-place.
 
-    In-place y no reasignacion: un grafo capturado apunta a la direccion de memoria del
-    tensor, asi que `fill_` la ve y una reasignacion no. Un float de Python, ademas,
-    quedaria horneado en el grafo y el dial no haria nada — sin error.
+    `inference_mode(False)` NO es opcional. El tensor se crea durante el constructor
+    de `RefusalProjection`, antes de que Dynamo capture `forward`. Si naciera dentro
+    del primer forward seria un *inference tensor* y PyTorch prohibiria mutarlo
+    in-place despues:
 
-    `inference_mode(False)` NO es opcional: los buffers nacen en el forward de warmup,
-    dentro del `torch.inference_mode()` de vLLM, y PyTorch prohibe mutar in-place un
-    inference tensor despues. Sin esto el dial se queda clavado y el endpoint da 500.
+        RuntimeError: Inplace update to inference tensor outside InferenceMode is
+        not allowed.
+
+    Ademas, entrar en `_lock` desde el forward hace que el compilador fullgraph aborte
+    con `Unsupported context manager`. Por eso esta funcion no se llama desde forward.
     """
     global _lam_value
     with _lock:
+        t = _lam_by_device.get(device)
+        if t is None:
+            init = float(os.environ.get(ENV_LAMBDA, "0.0"))
+            _lam_value = init
+            with torch.inference_mode(False):
+                t = torch.tensor(init, device=device, dtype=dtype)
+            _lam_by_device[device] = t
+        return t
+
+
+def set_lambda(value: float) -> float:
+    """Muta lam IN-PLACE en todos los devices. Seguro con grafos ya capturados."""
+    global _lam_value
+    with _lock:
         with torch.inference_mode(False):
-            for m in _instances:
-                m.lam.fill_(value)
+            for t in _lam_by_device.values():
+                t.fill_(value)
         _lam_value = float(value)
         return _lam_value
 
@@ -395,49 +548,44 @@ class RefusalProjection(nn.Module):
     DeepSeek, 1,66e-3 contra 2,29e-3 haciendolo en bf16 — mejora un 28% y es gratis.
     """
 
-    def __init__(self, r_hat: torch.Tensor, coef: float) -> None:
+    def __init__(
+        self,
+        r_hat: torch.Tensor,
+        coef: float,
+        *,
+        device: torch.device,
+        role: int = ROLE_TARGET,
+    ) -> None:
         super().__init__()
-        # Los dos buffers se CREAN aqui, no en el forward, y se rellenan copiando.
-        #
-        # `torch.zeros` dentro del contexto de device de vLLM nace ya en la GPU; un
-        # tensor que YA existe (r_hat sale de torch.frombuffer sobre el safetensors, o
-        # sea CPU) no lo mueve nadie, porque vLLM no llama a .to() sobre el modelo. De
-        # ahi el zeros+copy_ en vez de un clone().
-        #
-        # Por que importa hacerlo aqui y no perezosamente en el forward: este modulo cae
-        # DENTRO de la region que compila torch.compile —Qwen3_5Model lleva
-        # @support_torch_compile y el hook vive en el forward del DecoderLayer—, y
-        # TorchDynamo no sabe trazar ni un `with threading.Lock()` ni una reasignacion de
-        # atributos del modulo. La version de DeepSeek resolvia lam perezosamente y no lo
-        # sufria porque SU hook queda fuera de la region compilada
-        # (`vllm::deepseek_v4_attention` esta en splitting_ops). Aqui reventaba el
-        # arranque en determine_available_memory con un error de compilador.
-        #
-        # Resultado: el forward son solo operaciones de tensores. Sin locks, sin
-        # inicializacion perezosa, sin ramas sobre atributos de Python. Trazable y
-        # capturable en grafo CUDA.
-        buf = torch.zeros(r_hat.shape[0], dtype=torch.float32)
-        buf.copy_(r_hat)
-        self.register_buffer("r_hat", buf, persistent=False)
-
-        # lam NO se comparte entre capas: cada una tiene el suyo y `set_lambda` los
-        # rellena TODOS in-place. Un tensor compartido obligaba a buscarlo por device en
-        # un dict con lock, que es justo lo que Dynamo rechaza. Con `fill_` in-place el
-        # dial sigue funcionando con los grafos ya capturados, que es la propiedad que
-        # de verdad hay que conservar.
-        lam = torch.zeros((), dtype=torch.float32)
-        lam.fill_(float(os.environ.get(ENV_LAMBDA, "0.0")))
-        self.register_buffer("lam", lam, persistent=False)
-
+        # Los dos tensores quedan en el device definitivo ANTES de que Dynamo vea
+        # forward. Moverlos perezosamente alli obligaria a ejecutar Python (incluido
+        # el lock del registro global) dentro de una region fullgraph.
+        self.register_buffer(
+            "r_hat",
+            r_hat.to(device=device, dtype=torch.float32),
+            persistent=False,
+        )
         self.coef = float(coef)
-        _instances.append(self)
+        self._lam = get_lambda_tensor(device, torch.float32)
+        # BUFFER POR ROL ATADO AQUI, no consultado en el forward. Esta es LA
+        # diferencia con el port de DeepSeek y no es cosmetica: alli el forward
+        # llama a `view_for(role, n)`, que indexa una lista global de modulo. Este
+        # forward es fullgraph, y leer estado Python mutable desde dentro provoca
+        # recompilaciones. Atado como atributo, el forward solo ve un tensor.
+        #
+        # None = los buffers no existian al construir la capa (tests, o el hook
+        # activado sin runner). El forward cae al dial global, que es el
+        # comportamiento de antes: degradar, nunca petar.
+        self._tok: torch.Tensor | None = get_buffer(role)
+        self._role = role
 
     def forward(self, y: torch.Tensor) -> torch.Tensor:
         r = self.r_hat
         proj = y.to(torch.float32) @ r
-
-        # El lambda por token NO se consulta aqui. Leer un global mutable desde dentro de
-        # la region compilada provoca recompilaciones y rompe la captura de grafos, y el
-        # mecanismo esta documentado como muerto de todos modos. Se conserva la API
-        # porque el arbol de la imagen la importa, pero el kernel usa el dial global.
-        return y - (self.lam * self.coef * proj).unsqueeze(-1).to(y.dtype) * r.to(y.dtype)
+        # `self._tok` se fija en __init__ y no cambia nunca, asi que este `is None`
+        # lo resuelve Dynamo UNA vez al especializar: no es una rama por paso ni un
+        # guard que se reevalue. Lo que cambia entre pasos es el CONTENIDO del
+        # buffer, que el kernel lee de memoria — exactamente lo que sobrevive al
+        # replay del grafo.
+        lam = self._lam if self._tok is None else self._tok[: proj.shape[0]]
+        return y - (lam * self.coef * proj).unsqueeze(-1).to(y.dtype) * r.to(y.dtype)

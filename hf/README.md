@@ -25,6 +25,22 @@ curl -XPOST localhost:8888/admin/refusal_lambda -d '{"lambda": 1}'   # ablation 
 curl -XPOST localhost:8888/admin/refusal_lambda -d '{"lambda": 0}'   # off, bit-exact base
 ```
 
+Since 2026-08-19 λ can also be set **per request**, so one pod serves a normal alias and an
+ablated one from the same weights, in the same batch:
+
+```bash
+curl -XPOST localhost:8888/v1/chat/completions \
+  -d '{"model":"qwen38-27b","messages":[...],"cache_salt":"refusal:1.0"}'
+```
+
+Requests without a salt keep using the global dial. This was documented as *dead* until now:
+the obvious implementation is silently wrong, because CUDA graph capture bakes in the global
+scalar and replay runs no Python — every graph-served decode used the global λ with no
+warning. The fix binds a per-role buffer to the module at construction, which also keeps it
+compatible with Dynamo's `fullgraph` region (measured: compiles once, `frames=1`, and
+mutating the buffer does not recompile). Details and the failing-capable tests are in the
+GitHub README.
+
 Code, patch and benchmarks: **https://github.com/pocharlies/qwen38-27b-rank1-refusal-projection**
 
 ## What is in the file

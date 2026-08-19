@@ -53,6 +53,8 @@ from vllm.model_executor.layers.vocab_parallel_embedding import (
 )
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.refusal_projection import (
+    ROLE_DRAFT as refusal_ROLE_DRAFT,
+    ROLE_TARGET as refusal_ROLE_TARGET,
     RefusalProjection,
     is_enabled as refusal_is_enabled,
     resolve_direction as refusal_resolve_direction,
@@ -221,10 +223,25 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
             if got_attn is None and is_mtp:
                 got_attn = refusal_resolve_mtp_direction()
                 got_mlp = refusal_resolve_mtp_direction()
+            projection_device = self.input_layernorm.weight.device
+            # ROL del lambda por peticion, fijado AQUI y no en el forward. Sale del
+            # mismo `is_mtp` que ya decide si hay direccion que resolver, asi que no
+            # es una heuristica nueva: backbone -> target, `mtp.*` -> draft. Fijarlo
+            # en la construccion es lo que impide que una fila del drafter lea el
+            # lambda de una peticion del target, y ademas es lo unico compatible con
+            # que este forward sea fullgraph.
+            #
+            # Los DOS proyectores de la capa comparten rol: escriben al mismo stream
+            # residual en el mismo paso, con las mismas filas.
+            role = refusal_ROLE_DRAFT if is_mtp else refusal_ROLE_TARGET
             if got_attn is not None:
-                self.refusal_attn = RefusalProjection(*got_attn)
+                self.refusal_attn = RefusalProjection(
+                    *got_attn, device=projection_device, role=role
+                )
             if got_mlp is not None:
-                self.refusal_mlp = RefusalProjection(*got_mlp)
+                self.refusal_mlp = RefusalProjection(
+                    *got_mlp, device=projection_device, role=role
+                )
 
     def forward(
         self,
