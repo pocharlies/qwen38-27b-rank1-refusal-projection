@@ -23,7 +23,9 @@
 #   tool-calling OK in both arms
 
 model: unsloth/Qwen3.8-27B-NVFP4
-model_revision: a767244d27bd76589a3e3b2ab4e64032c4ebc7af
+# Pin to `main`, not a sha: Unsloth super-squashes their repos and old revisions
+# (a767244d… and everything before 2026-08-15) have been 404 since then.
+model_revision: main
 runtime: vllm
 min_nodes: 1
 max_nodes: 1

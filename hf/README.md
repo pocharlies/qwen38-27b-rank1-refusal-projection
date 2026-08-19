@@ -247,9 +247,12 @@ curl -XPOST localhost:8101/admin/refusal_lambda -d '{"lambda": 1}'   # ablation 
 curl -XPOST localhost:8101/admin/refusal_lambda -d '{"lambda": 0}'   # off, bit-exact
 ```
 
-It pulls the **stock** `unsloth/Qwen3.8-27B-NVFP4` at a pinned revision — no second checkpoint
-anywhere. Set `container:` to your own build of the Dockerfile in the GitHub repo (COPY-only
-over an existing vLLM image, so it cross-builds to arm64 from x86 without QEMU).
+It pulls the **stock** `unsloth/Qwen3.8-27B-NVFP4` at `model_revision: main` — no second
+checkpoint anywhere. Set `container:` to your own build of the Dockerfile in the GitHub repo
+(COPY-only over an existing vLLM image, so it cross-builds to arm64 from x86 without QEMU).
+
+> Note on the revision: Unsloth super-squashes their repos, so old pinned SHAs go 404.
+> Don't pin a sha — `main` is the only revision guaranteed to still exist tomorrow.
 
 Two lines in it are load-bearing: `pre_exec` runs the fail-closed guard **before** serving, and
 `--attention-backend triton_attn` is not optional on vLLM 0.25.2 — see below.

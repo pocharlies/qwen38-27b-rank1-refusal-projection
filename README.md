@@ -319,10 +319,13 @@ curl -XPOST localhost:8101/admin/refusal_lambda -d '{"lambda": 1}'   # ablation 
 curl -XPOST localhost:8101/admin/refusal_lambda -d '{"lambda": 0}'   # off, bit-exact
 ```
 
-It pulls the **stock** `unsloth/Qwen3.8-27B-NVFP4` at a pinned revision, so there is no second
-checkpoint anywhere in the flow. To build the image yourself instead, see
+It pulls the **stock** `unsloth/Qwen3.8-27B-NVFP4` at `model_revision: main`, so there is no
+second checkpoint anywhere in the flow. To build the image yourself instead, see
 [`deploy/Dockerfile`](deploy/Dockerfile): COPY-only over the public upstream base, so it
 cross-builds to arm64 from an x86 host without QEMU (~3 min).
+
+> Note on the revision: Unsloth super-squashes their repos, so old pinned SHAs go 404.
+> Don't pin a sha — `main` is the only revision guaranteed to still exist tomorrow.
 
 Two things in that file are load-bearing, not stylistic:
 
