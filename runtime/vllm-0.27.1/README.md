@@ -14,6 +14,36 @@ docker buildx build --platform linux/arm64 \
   -t your-registry/vllm-qwen38-rank1:v0.27.1 --push .
 ```
 
+## The per-request lambda requires the V2 model runner
+
+`patch_model_runner` wires `v1/worker/gpu/model_runner.py`, the **V2** runner. On
+0.27.1 that runner is chosen by architecture, and `Qwen3_5ForConditionalGeneration`
+is not among the seven in `default_v2_model_runner_architectures()`; because the
+model is flagged hybrid, `is_hybrid and not is_default_v2_architecture` sends it to
+the V1 runner, which carries no refusal wiring. The failure is silent and total:
+`RefusalState` is never constructed, the per-token buffer never exists, and every
+forward falls back to the global scalar, so `cache_salt: "refusal:<x>"` does nothing
+while `/admin/refusal_lambda` keeps working.
+
+Measured in production on 2026-08-22, temperature 0, same prompt:
+
+| request | output |
+|---|---|
+| global dial 0.0 | baseline |
+| global dial 1.0 | **different** — the projection itself is fine |
+| dial 0.0 + `cache_salt: refusal:1.0` | byte-for-byte the baseline |
+| dial 0.0 + `cache_salt: refusal:4.0` | byte-for-byte the baseline |
+
+The Dockerfile now sets `VLLM_USE_V2_MODEL_RUNNER=1`, which short-circuits the
+architecture gate. `_validate_v2_model_runner` still runs, so an unsupported
+configuration aborts at startup rather than degrading silently; the only feature it
+gives up for this deployment is the `thinking_token_budget` request parameter.
+
+Two independent ways to confirm a running pod applies per-request lambda:
+`Using V2 Model Runner` and `refusal projection: buffers por rol listos` must both
+appear in the engine log, and the same refusal-triggering prompt at temperature 0
+must produce different output with `cache_salt: refusal:1.0` than with `refusal:0`.
+
 The deployment configuration used for the A/B stayed unchanged: Unsloth NVFP4,
 native MTP `k=3`, 262144 context, 6 sequences and 16384 batched tokens. On the same
 single-stream tests, 0.27.1 was functional but not a speed upgrade:

@@ -28,6 +28,35 @@ RUN python3 /opt/qwen38/patch_vllm_0271.py --site ${SITE} \
 COPY hf/refusal_dirs_qwen38.safetensors /opt/refusal/refusal_dirs_qwen38.safetensors
 COPY runtime/vllm-0.27.1/payload/verify_qwen38_rank1.py /opt/qwen38/verify_qwen38_rank1.py
 
+# Blocks A, B and E of the per-request acceptance test run here, exactly as
+# Dockerfile.rank1g did for the 0.25.2 lineage. Dropping this gate is how the
+# 0.27.1 rebuild shipped a runtime whose per-request lambda never executed.
+# Blocks C and D need a GPU and are skipped: this line does not certify the whole
+# fix, only that the state machine and the role buffers are not broken at the base.
+COPY tools/test_per_request.py /opt/refusal/test_per_request.py
+RUN cd /tmp && VLLM_REFUSAL_DIRS=/opt/refusal/refusal_dirs_qwen38.safetensors \
+    python3 /opt/refusal/test_per_request.py
+
+# THE PATCHED RUNNER MUST BE THE ONE THAT ACTUALLY RUNS, and on 0.27.1 it is not
+# by default. `patch_model_runner` wires v1/worker/gpu/model_runner.py — the V2
+# runner — but 0.27.1 picks the runner from the architecture:
+# `Qwen3_5ForConditionalGeneration` is not among the 7 in
+# default_v2_model_runner_architectures(), and the model is flagged hybrid, so
+# `is_hybrid and not is_default_v2_architecture` sends it to the V1 runner, which
+# carries no refusal wiring at all. The symptom is silent and total: RefusalState
+# is never constructed, the per-token buffer never exists, every forward falls back
+# to the global scalar, and `cache_salt: "refusal:<x>"` does nothing. Measured
+# 2026-08-22 in production: identical output byte for byte at temperature 0 with
+# lambda 0, 1.0, 2.5 and 4.0, while the global dial did change the answer.
+#
+# Pinning it in the image, not in the Deployment, keeps the guarantee with the
+# artifact that needs it. This image serves one model, so the scope is right.
+ENV VLLM_USE_V2_MODEL_RUNNER=1
+
+# Fails the build if a future base ever stops offering that switch, instead of
+# silently reverting to a runner where the projection is dead code.
+RUN python3 -c 'import vllm.envs as e; assert e.VLLM_USE_V2_MODEL_RUNNER is True, e.VLLM_USE_V2_MODEL_RUNNER; print("model runner V2: forzado")'
+
 ENV VLLM_REFUSAL_LAMBDA_INIT=0.0
 
 LABEL org.opencontainers.image.title="vllm-qwen38-rank1" \
