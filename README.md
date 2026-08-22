@@ -10,6 +10,14 @@ speculative decoding k=3, `--max-model-len 65536`.
 Direction vectors and model card:
 [`pocharlies/qwen38-27b-uncensored-abliterated-refusal-directions`](https://huggingface.co/pocharlies/qwen38-27b-uncensored-abliterated-refusal-directions).
 
+### vLLM 0.27.1 compatibility release — 2026-08-22
+
+The tested ARM64 port is now published under [`runtime/vllm-0.27.1/`](runtime/vllm-0.27.1/).
+It keeps the exact Unsloth NVFP4 + native MTP `k=3` serving configuration. It is a clean
+compatibility update, but not a speed win: code decode changed 28.19 → 26.01 tok/s and the
+varied workload 21.72 → 21.33 tok/s. The raw summary is
+[`hf/benchmarks/2026-08-22/vllm-0.27.1.json`](hf/benchmarks/2026-08-22/vllm-0.27.1.json).
+
 **Headline result — λ=1 is the measured operating point:**
 
 | metric | λ=0 | λ=1 | λ=1.5 | λ=2.5 |

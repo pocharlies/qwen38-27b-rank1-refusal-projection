@@ -53,6 +53,15 @@ GitHub README.
 
 Code, patch and benchmarks: **https://github.com/pocharlies/qwen38-27b-rank1-refusal-projection**
 
+### vLLM 0.27.1 runtime update — 2026-08-22
+
+The exact ARM64 compatibility port is published in the GitHub repository under
+[`runtime/vllm-0.27.1/`](https://github.com/pocharlies/qwen38-27b-rank1-refusal-projection/tree/main/runtime/vllm-0.27.1).
+The Unsloth NVFP4 + native MTP `k=3` configuration was not changed. It passed health,
+tooling and refusal-dial checks, but was slightly slower than 0.25.2: 26.01 vs 28.19 tok/s
+on code and 21.33 vs 21.72 tok/s on the varied workload. Machine-readable results are in
+[`benchmarks/2026-08-22/vllm-0.27.1.json`](benchmarks/2026-08-22/vllm-0.27.1.json).
+
 ---
 
 ## Responsibility & intended use

@@ -1,0 +1,29 @@
+{
+  "schema_version": "runtime-benchmark.v1",
+  "measured_at": "2026-08-22",
+  "hardware": "1x NVIDIA DGX Spark GB10 / sm_121 / 128 GB unified memory",
+  "model": "unsloth/Qwen3.8-27B-NVFP4",
+  "configuration_unchanged": {
+    "speculative_method": "mtp",
+    "num_speculative_tokens": 3,
+    "max_model_len": 262144,
+    "max_num_seqs": 6,
+    "max_num_batched_tokens": 16384,
+    "kv_cache_gib": 10
+  },
+  "results": {
+    "code": {
+      "vllm_0_25_2_decode_tok_s": 28.19,
+      "vllm_0_27_1_decode_tok_s": 26.01,
+      "vllm_0_25_2_acceptance_percent": 85.25,
+      "vllm_0_27_1_acceptance_percent": 80.34
+    },
+    "varied": {
+      "vllm_0_25_2_decode_tok_s": 21.72,
+      "vllm_0_27_1_decode_tok_s": 21.33,
+      "vllm_0_25_2_acceptance_percent": 56.53,
+      "vllm_0_27_1_acceptance_percent": 54.82
+    }
+  },
+  "verdict": "compatible and stable; no throughput improvement over 0.25.2"
+}
