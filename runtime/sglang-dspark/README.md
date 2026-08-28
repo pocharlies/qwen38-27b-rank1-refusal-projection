@@ -123,7 +123,14 @@ python3 runtime/sglang-dspark/test_projection_equivalence.py   # CPU, sin motor
 2) lambda=0 identidad bit a bit  OK
 3) set_lambda in-place  OK  (lam=1.50, mismo tensor)
 4) forma incorrecta -> RuntimeError  OK
+8) doble reclamacion -> RuntimeError  OK
 ```
+
+La 8 cierra el unico agujero que dejaba el gate de arriba: `verify_all_consumed()`
+contaba con un `set`, que ve la FALTA pero no el EXCESO. Si dos modulos reclamasen la
+misma direccion —otro subarbol cuyo nombre tambien case con `layers.N.<a>.<b>`— esa capa
+quedaria proyectada a 2*lambda y el conteo seguiria diciendo 128/128. Ahora es un
+contador y se exige exactamente una vez.
 
 ## Usar
 

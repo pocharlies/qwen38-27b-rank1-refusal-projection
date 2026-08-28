@@ -81,7 +81,12 @@ _lock = threading.Lock()
 _state: Optional["_State"] = None
 _dirs: Optional[dict] = None
 _coefs: Optional[dict] = None
-_consumed: set = set()
+# Contador, no un `set`: un `set` solo ve la falta. Si DOS modulos reclamasen la
+# misma direccion —otro subarbol cuyo nombre tambien casa con
+# `layers.N.<a>.<b>`— el conteo seguiria dando 128/128 y esa capa quedaria
+# proyectada DOS veces, o sea a 2*lambda. Tan invisible como quedarse a medias,
+# que es justo lo que este fichero existe para no permitir.
+_consumed: dict = {}
 _seen_prefixes: set = set()
 
 
@@ -271,7 +276,7 @@ def resolve(prefix: str) -> Optional[_Writer]:
     key = f"{_CKPT_STEM}{int(m.group(1))}.{tail[-2]}.{tail[-1]}"
     if key not in _dirs:
         return None
-    _consumed.add(key)
+    _consumed[key] = _consumed.get(key, 0) + 1
     return _Writer(key, _dirs[key], _coefs[key], _state)
 
 
@@ -284,7 +289,14 @@ def verify_all_consumed() -> None:
     """
     if _state is None:
         return
-    orphan = sorted(set(_dirs) - _consumed)
+    twice = sorted(k for k, n in _consumed.items() if n > 1)
+    if twice:
+        raise RuntimeError(
+            f"rank1-refusal: {len(twice)} direcciones reclamadas MAS DE UNA VEZ, p.ej. "
+            f"{[(k, _consumed[k]) for k in twice[:3]]}. Esas capas se proyectarian dos "
+            f"veces (2*lambda) y el conteo total seguiria cuadrando. NO se sirve asi."
+        )
+    orphan = sorted(set(_dirs) - set(_consumed))
     if orphan:
         raise RuntimeError(
             f"rank1-refusal: {len(orphan)} direcciones sin reclamar por ninguna capa, "
@@ -294,7 +306,10 @@ def verify_all_consumed() -> None:
             f"{sorted(_seen_prefixes)[:3]}. Claves esperadas: {sorted(_dirs)[:2]}. "
             f"NO se sirve asi."
         )
-    logger.info("rank1-refusal: %d/%d direcciones reclamadas", len(_consumed), len(_dirs))
+    logger.info(
+        "rank1-refusal: %d/%d direcciones reclamadas, cada una exactamente una vez",
+        len(_consumed), len(_dirs),
+    )
 
 
 def set_lambda(value: float) -> float:

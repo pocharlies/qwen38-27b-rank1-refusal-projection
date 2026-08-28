@@ -152,6 +152,19 @@ def main() -> int:
             pass
     R.set_lambda(0.0)
 
+    # 8 -- doble reclamacion. Va la ULTIMA porque ensucia el contador a proposito:
+    # dos modulos sobre la misma direccion la proyectarian a 2*lambda, y el conteo
+    # total seguiria dando 128/128. Un `set` no lo veria.
+    R.resolve("model.language_model.model.layers.3.mlp.down_proj")
+    try:
+        R.verify_all_consumed()
+        fails.append("8) verify_all_consumed NO aborto con una direccion reclamada 2 veces")
+    except RuntimeError as e:
+        if "MAS DE UNA VEZ" not in str(e):
+            fails.append(f"8) aborto, pero por otro motivo: {e}")
+        else:
+            print("8) doble reclamacion -> RuntimeError  OK")
+
     if fails:
         print("\nFALLOS:")
         for f in fails:
