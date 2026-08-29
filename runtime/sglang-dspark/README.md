@@ -37,18 +37,45 @@ La imagen de la receta **no trae el hook**: cambiar de motor a secas borra el
 | | vLLM 0.27.1 | SGLang (esta capa) |
 |---|---|---|
 | donde se aplica | hook por modulo (`RefusalProjection`) | dentro del forward, por anclas |
-| lambda por peticion | si (`cache_salt: refusal:<x>`) | **no** |
+| lambda por peticion | si (`cache_salt: refusal:<x>`) | **si** (v0.2.0), mismo sello |
 | dial global | `/admin/refusal_lambda` | igual, envolviendo `/set_internal_state` |
 | drafter | MTP del propio checkpoint, sin ablar (`MTP_MODE=off`) | DSpark, otro checkpoint, sin ablar |
 
-**El lambda por peticion no se porta.** En vLLM viajaba en `cache_salt` y costo cablear
-el Model Runner V2; SGLang no tiene plumbing equivalente y no se inventa aqui. Decision
-del owner (28-08-2026). Consecuencia concreta, porque muerde: la entrada
-`qwen38-27b-uncensored` de LiteLLM sella `extra_body: {cache_salt: "refusal:1.0"}`, y
-con este motor **ese sello no hace nada**. El alias uncensored responde con el lambda
-GLOBAL que tenga el pod en ese momento — que arranca en 0, o sea censurado. Para que
-signifique algo hay que subir el dial (panel o `POST /admin/refusal_lambda`), y entonces
-lo sube para TODO el pod, incluido el alias normal. Un pod, un lambda.
+## Lambda por peticion: dos alias, un pod (v0.2.0)
+
+El sello es el MISMO que en vLLM — `cache_salt: "refusal:1.0"` — asi que la entrada
+`qwen38-27b-uncensored` que LiteLLM ya tenia escrita funciona sin tocar nada:
+
+```sh
+curl -s $BASE/v1/chat/completions -d '{"model":"qwen38-27b","cache_salt":"refusal:1.0",
+  "messages":[{"role":"user","content":"..."}]}'
+```
+
+En SGLang esto NO hubo que inventarlo, y esa es la diferencia con vLLM (donde costo
+cablear el Model Runner V2):
+
+- `entrypoints/openai/serving_base.py:_compute_extra_key` ya concatena `cache_salt` en
+  `Req.extra_key`;
+- y ese mismo `extra_key` **ya entra en la clave del radix cache**
+  (`mem_cache/radix_cache.py`: *"extra key (e.g. lora_id, cache_salt)"*).
+
+Lo segundo importa tanto como lo primero: **el KV depende de lambda**. Un prefijo
+cacheado con lambda=0 y reusado con lambda=1 daria estados corruptos en silencio. Como
+el sello viaja en la clave, los dos alias no comparten prefijo: el aislamiento sale
+gratis.
+
+Lo unico que se anade aqui es una **fila de lambda por token**, rellenada al final de
+`ForwardBatch.init_new` (una vez por paso, siempre fuera del grafo; en replay no corre
+Python, pero el grafo lee la memoria del buffer). Los `_Writer` atan ese buffer en su
+constructor y el forward solo hace `w.tok[:n]`: cero globals, cero dicts, que bajo
+`torch.compile` serian recompilaciones.
+
+Es **fail-safe, no fail-closed**: ante un layout que no cuadre (filas que no salen ni de
+`extend_seq_lens` ni de un multiplo del batch) el lote entero cae al lambda GLOBAL y se
+avisa una vez. Recortar o adivinar significaria aplicarle a una peticion el lambda de
+OTRA, y eso es peor que ignorar el sello.
+
+El dial global sigue existiendo y manda sobre quien no trae sello.
 
 **Los `--forward-hooks` nativos de SGLang no valen.** Se registran DESPUES de capturar
 los grafos (`model_executor/model_runner_components/cuda_graph_setup.py` lo dice en un
