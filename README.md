@@ -10,6 +10,58 @@ speculative decoding k=3, `--max-model-len 65536`.
 Direction vectors and model card:
 [`pocharlies/qwen38-27b-uncensored-abliterated-refusal-directions`](https://huggingface.co/pocharlies/qwen38-27b-uncensored-abliterated-refusal-directions).
 
+### Second runtime: SGLang + DSpark — 2026-08-29
+
+The dial is no longer tied to vLLM. [`runtime/sglang-dspark/`](runtime/sglang-dspark/)
+ports it to the public SGLang recipe
+[`MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark`](https://github.com/MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark)
+running its **DSpark** speculative decoder. Same 2.6 MB of directions, same per-module
+coefficients, same meaning of λ, same `cache_salt: "refusal:<x>"` per-request seal.
+
+**Why you might want it — measured on the same shared GB10, single stream, T=0:**
+
+| workload | vLLM 0.27.1 + MTP k=3 | SGLang + DSpark | |
+|---|---:|---:|---|
+| code (LRUCache + test) | 26.01 tok/s | **56.1 tok/s** | **2.2×** |
+| prose (essay) | 21.33 tok/s | 18.0 tok/s | −16% |
+
+The vLLM column is this repo's own harness
+([`hf/benchmarks/2026-08-22/vllm-0.27.1.json`](hf/benchmarks/2026-08-22/vllm-0.27.1.json),
+"varied" for prose); the SGLang column is a single-stream `curl` at T=0, so treat the
+prose row as indicative and the code row as real — a 2.2× gap is far outside harness
+noise, and it matches the recipe author's own DSpark-vs-MTP finding (code up, long-form
+down). Both columns come from a node whose GB10 is **shared** by five workloads.
+
+**Cost of the ablation, measured on the same box** (same prompt, T=0, λ=0 vs λ=1):
+
+| | λ=0 | λ=1 |
+|---|---:|---:|
+| code | 56.2 tok/s | **56.0 tok/s** |
+| prose | 18.0 tok/s | 17.3 tok/s |
+
+Code is free; prose loses ~4%. The DSpark drafter is **not** projected (it is a separate
+checkpoint with its own architecture, and there are no directions for it), and this is
+the price — much smaller than the ~20% the MTP drafter costs on refusal topics.
+
+**What is different in SGLang, and it is mostly good news:**
+
+- **The per-request seal needed almost no plumbing.** `_compute_extra_key` already folds
+  `cache_salt` into `Req.extra_key`, and that key already goes into the **radix-cache
+  key**. Prefix isolation between λ=0 and λ=1 — mandatory, because the KV depends on
+  λ — comes for free. In vLLM this cost a port of the V2 model runner.
+- **The native `--forward-hooks` are useless for this.** SGLang registers them *after*
+  capturing the CUDA graphs (`cuda_graph_setup.py` says so in a comment), so a native
+  hook ablates prefill and **not** decode. Silently. The patch goes inside the module
+  forward instead.
+- **`Qwen2MoeMLP.forward` has two returns**, and the fused SiLU+mul+FP4-quant branch is
+  the one NVFP4 actually takes. Patch only the other and you ship a model that is
+  ablated in tests and not in production.
+- The fail-closed gate counts each direction **exactly once** now: a `set` sees a missing
+  direction but not a double-claimed one, and a layer projected twice is 2λ with the
+  total still reading 128/128.
+
+Fourteen anchors, and the build dies if any of them moved.
+
 ### vLLM 0.27.1 compatibility release — 2026-08-22
 
 The tested ARM64 port is now published under [`runtime/vllm-0.27.1/`](runtime/vllm-0.27.1/).
