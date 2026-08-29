@@ -10,6 +10,7 @@ tags:
   - activation-steering
   - interpretability
   - vllm
+  - sglang
   - qwen3.8
 library_name: safetensors
 ---
@@ -21,6 +22,14 @@ library_name: safetensors
 No second 23 GB checkpoint. No baked-in abliterated weights. This is a **2.6 MB pack of
 direction vectors** that plugs into a running vLLM and lets you dial the model's refusal
 behaviour up or down **at runtime, per request, with zero restart**:
+
+> **Two runtimes, one pack of directions.** The dial ships for **vLLM 0.27.1** and, since
+> 2026-08-29, for **SGLang + DSpark** — the public
+> [DGX Spark recipe](https://github.com/MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark). Same
+> vectors, same per-module coefficients, same `cache_salt: "refusal:<x>"` seal. Measured
+> on the same shared GB10, single stream, T=0: **code 26.0 → 56.1 tok/s (2.2×)**, prose
+> 21.3 → 18.0. Ablation cost on SGLang: **zero on code** (56.2 vs 56.0), −4% on prose.
+> Port and caveats: [`runtime/sglang-dspark/`](https://github.com/pocharlies/qwen38-27b-rank1-refusal-projection/tree/main/runtime/sglang-dspark).
 
 | you ask | the model behaves as |
 |---|---|
