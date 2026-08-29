@@ -76,6 +76,19 @@ PY
 # se comporta EXACTAMENTE como su base (ese es el rollback sin rebuild). LAMBDA=0
 # arranca con el dial a cero — el estado uncensored se ENCIENDE, no es el default.
 # Las dos van en el manifiesto, no aqui, para que el dial se vea en GitOps.
+# Chat template TOLERANTE con multiples system messages. El checkpoint RadixArk
+# NO trae chat_template (tokenizer_config.chat_template vacio), asi que SGLang cae
+# a un handler que replica el template OFICIAL de Qwen — y ese, por diseno, aborta
+# con "System message must be at the beginning." en cuanto hay mas de un system.
+# opencode (y otros agentes) mandan DOS: el prompt del agente y el de entorno. vLLM
+# lo toleraba con su template embebido; para no regresar ese comportamiento al
+# cambiar de motor, se hornea aqui el template oficial de Qwen3.8-27B con UNA linea
+# cambiada: el system que no es el primero se renderiza como un bloque
+# <|im_start|>system extra (que el modelo maneja) en vez de lanzar la excepcion.
+# Todo lo demas del template es el oficial, byte a byte. Se activa con
+# --chat-template en el arranque; sin ese flag la imagen se comporta como antes.
+COPY runtime/sglang-dspark/qwen38-chat-template-tolerant.jinja /opt/qwen38/chat_template.jinja
+
 ENV SGLANG_REFUSAL_LAMBDA=0
 
 LABEL org.opencontainers.image.title="sglang-qwen38-27b-rank1-arm64" \
