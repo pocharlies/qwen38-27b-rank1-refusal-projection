@@ -77,6 +77,25 @@ _DRAFT_MARKERS = ("mtp", "draft", "dspark", "dflash", "nextn", "eagle")
 
 _LAYER_RE = re.compile(r"(?:^|\.)layers\.(\d+)\.(.+)$")
 
+# --- lambda POR PETICION -------------------------------------------------------
+#
+# Viaja en `cache_salt`, igual que en el port de vLLM. En SGLang eso NO hay que
+# inventarlo: el layer OpenAI ya concatena `cache_salt` (+ `extra_key`) en
+# `Req.extra_key` (entrypoints/openai/serving_base.py:_compute_extra_key) y ese
+# mismo valor entra en la clave del radix cache
+# (mem_cache/radix_cache.py: "extra key (e.g. lora_id, cache_salt)").
+#
+# Lo segundo importa tanto como lo primero: el KV DEPENDE de lambda. Un prefijo
+# cacheado con lambda=0 y reusado con lambda=1 daria estados corruptos, en silencio.
+# Como el sello viaja en la clave, los dos alias no comparten prefijo: el aislamiento
+# sale gratis, no hay que programarlo.
+_SALT_RE = re.compile(r"refusal:\s*([-+]?\d*\.?\d+)")
+
+# 131072 filas = 512 KB. Mas anchas que cualquier forward plausible (prefill troceado
+# 2048, decode 4 slots x 8 tokens de verify). Si algun dia se queda corto, `fill_batch`
+# cae al global y avisa UNA vez: nunca mezcla el lambda de una peticion con otra.
+TOKEN_BUFFER_ROWS = 131072
+
 _lock = threading.Lock()
 _state: Optional["_State"] = None
 _dirs: Optional[dict] = None
@@ -135,21 +154,40 @@ def _load_dirs(path: str):
 
 
 class _State:
-    """Estado global del hook. Un solo lambda para todo el servidor."""
+    """Estado del hook: el dial GLOBAL y el buffer POR TOKEN.
 
-    __slots__ = ("lam", "hidden", "device")
+    El global es el que mueven `/admin/refusal_lambda` y `/set_internal_state`, y es
+    el que se aplica a quien no trae sello. El buffer por token es el que permite
+    servir dos lambdas distintos EN EL MISMO LOTE, y por tanto dos alias sobre un
+    solo pod. Los dos son tensores en device mutados in-place: bajo CUDA graph, el
+    grafo hornea el PUNTERO, no el contenido.
+    """
+
+    __slots__ = ("lam", "tok", "hidden", "device", "value")
 
     def __init__(self, lam: float, hidden: int, device: torch.device):
         # inference_mode(False) NO es opcional: un tensor nacido en inference mode no
         # admite mutacion in-place despues, y el dial es exactamente eso.
         with torch.inference_mode(False):
             self.lam = torch.tensor(float(lam), device=device, dtype=torch.float32)
+            # Filas de sobra a proposito (512 KB): el forward mas ancho es un prefill
+            # troceado (chunked-prefill-size, 2048 hoy) y los grafos de decode
+            # rellenan hasta su bs capturado. Se crea AQUI, en la construccion del
+            # modelo, porque asignar durante la captura de grafos no vale.
+            self.tok = torch.full(
+                (TOKEN_BUFFER_ROWS,), float(lam), device=device, dtype=torch.float32
+            )
         self.hidden = int(hidden)
         self.device = device
+        self.value = float(lam)
 
     def set_lambda(self, value: float) -> None:
         with torch.inference_mode(False):
             self.lam.fill_(float(value))
+            # El buffer por token tambien: quien no trae sello usa el global, y las
+            # filas de padding de los grafos leen de aqui.
+            self.tok.fill_(float(value))
+        self.value = float(value)
 
 
 class _Writer:
@@ -160,13 +198,18 @@ class _Writer:
     —que la receta DSpark enciende— eso provoca recompilaciones.
     """
 
-    __slots__ = ("r_hat", "coef", "lam", "hidden", "key")
+    __slots__ = ("r_hat", "coef", "lam", "tok", "hidden", "key")
 
     def __init__(self, key: str, r_hat: torch.Tensor, coef: float, st: "_State"):
         self.key = key
         self.r_hat = r_hat.to(device=st.device, dtype=torch.float32).contiguous()
         self.coef = float(coef)
         self.lam = st.lam
+        # El buffer por token se ATA aqui, en la construccion, y el forward solo hace
+        # un slice de un atributo tensor: cero globals, cero dicts, cero lock. Bajo
+        # `torch.compile` —que la receta DSpark enciende— leer estado Python mutable
+        # desde el forward provocaria recompilaciones.
+        self.tok = st.tok
         self.hidden = st.hidden
 
 
@@ -312,6 +355,101 @@ def verify_all_consumed() -> None:
     )
 
 
+def parse_request_lambda(extra_key) -> Optional[float]:
+    """`cache_salt: "refusal:<x>"` -> lambda. None si no lo trae o no es valido.
+
+    Se busca por REGEX y no por prefijo porque el layer OpenAI CONCATENA
+    `cache_salt` + `extra_key` sin separador: un sello valido puede quedar pegado a
+    otra cosa. Un valor fuera de la cota se ignora (se avisa una vez) y esa peticion
+    usa el global: nunca el lambda de otra.
+    """
+    if not extra_key or not isinstance(extra_key, str):
+        return None
+    m = _SALT_RE.search(extra_key)
+    if m is None:
+        return None
+    try:
+        v = float(m.group(1))
+    except ValueError:
+        return None
+    if not (LAMBDA_MIN <= v <= LAMBDA_MAX):
+        _warn_once("salt_range", f"cache_salt pide lambda {v}, fuera de "
+                                 f"[{LAMBDA_MIN}, {LAMBDA_MAX}]; se usa el global")
+        return None
+    return v
+
+
+_warned: set = set()
+
+
+def _warn_once(key: str, msg: str) -> None:
+    if key not in _warned:
+        _warned.add(key)
+        logger.warning("rank1-refusal: %s", msg)
+
+
+def fill_batch(worker_batch, forward_batch) -> None:
+    """Escribe una fila de lambda POR TOKEN para el lote en curso.
+
+    Se llama al final de `ForwardBatch.init_new`, o sea UNA vez por paso y SIEMPRE
+    fuera del grafo: en replay no corre Python, pero esto corre antes, y lo que el
+    grafo lee es la memoria del buffer.
+
+    FAIL-SAFE, no fail-closed: ante cualquier layout que no cuadre se deja el buffer
+    entero al lambda GLOBAL y se avisa una vez. Recortar o adivinar significaria
+    aplicarle a una peticion el lambda de OTRA, que es peor que ignorar el sello.
+    """
+    st = _state
+    if st is None:
+        return
+    reqs = getattr(worker_batch, "reqs", None) or []
+    lams = [parse_request_lambda(getattr(r, "extra_key", None)) for r in reqs]
+    if not lams or all(l is None for l in lams):
+        # Nadie trae sello: el buffer ya esta al global salvo que el lote anterior lo
+        # ensuciara. Un fill es un kernel sobre 512 KB, ni se nota.
+        with torch.inference_mode(False):
+            st.tok.fill_(st.value)
+        return
+
+    vals = [st.value if l is None else l for l in lams]
+    if len(set(vals)) == 1:
+        # Todas iguales: un solo kernel, sin copia host->device.
+        with torch.inference_mode(False):
+            st.tok.fill_(float(vals[0]))
+        return
+
+    ids = getattr(forward_batch, "input_ids", None)
+    n = int(ids.shape[0]) if ids is not None else 0
+    bs = len(vals)
+    per_token = None
+    seq_lens = getattr(worker_batch, "extend_seq_lens", None)
+    if seq_lens is not None and len(seq_lens) == bs and int(sum(seq_lens)) == n:
+        # Prefill: cada peticion aporta su tramo.
+        per_token = [v for v, l in zip(vals, seq_lens) for _ in range(int(l))]
+    elif n and bs and n % bs == 0:
+        # Decode, y tambien el paso de verify de la especulativa: mismas filas por
+        # peticion (1 en decode, draft+1 al verificar).
+        rep = n // bs
+        per_token = [v for v in vals for _ in range(rep)]
+    if per_token is None or len(per_token) != n or n > st.tok.shape[0]:
+        _warn_once(
+            "layout",
+            f"lote de {n} filas y {bs} peticiones con lambdas distintos que no encaja "
+            f"en ningun layout conocido (buffer {st.tok.shape[0]}); se usa el lambda "
+            f"GLOBAL para este lote. La seleccion por peticion NO esta actuando.",
+        )
+        with torch.inference_mode(False):
+            st.tok.fill_(st.value)
+        return
+
+    with torch.inference_mode(False):
+        # El resto del buffer al global: son las filas de padding de los grafos.
+        st.tok.fill_(st.value)
+        st.tok[:n].copy_(
+            torch.tensor(per_token, dtype=torch.float32), non_blocking=True
+        )
+
+
 def set_lambda(value: float) -> float:
     """Dial en caliente. Lo llama `Scheduler.set_internal_state` en CADA rank."""
     if _state is None:
@@ -354,4 +492,9 @@ def apply(w: Optional[_Writer], y: torch.Tensor) -> torch.Tensor:
             f"{tuple(y.shape)}"
         )
     proj = y.to(torch.float32) @ w.r_hat
-    return y - ((proj * w.lam * w.coef).unsqueeze(-1) * w.r_hat).to(y.dtype)
+    # UNA fila de lambda por token. Las filas de padding que meten los grafos de CUDA
+    # leen del mismo buffer, donde `fill_batch` deja el lambda GLOBAL — por eso
+    # cualquier n >= n_real es semanticamente correcta y el arreglo sobrevive al
+    # padding. Si el lote pide mas filas que el buffer, `fill_batch` ya cayo al global.
+    lam = w.tok[: proj.shape[0]] if proj.shape[0] <= w.tok.shape[0] else w.lam
+    return y - ((proj * lam * w.coef).unsqueeze(-1) * w.r_hat).to(y.dtype)

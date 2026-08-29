@@ -6,7 +6,7 @@ hermano de `qwen4_exp`: si el fuente se mueve, el build MUERE. Nunca una imagen 
 parchear — un servidor que abla el prefill y no el decode no se distingue de uno sano
 mirando una respuesta.
 
-DOCE SITIOS
+CATORCE SITIOS
 
   qwen3_5.py  (el modelo: `Qwen3_5ForCausalLM`, hibrido 3:1, 64 capas)
     S0  import del payload
@@ -37,6 +37,13 @@ DOCE SITIOS
     D3      el readback: `get_internal_state` publica el lambda VIVO de cada rank. Es el
         unico camino de vuelta desde el scheduler, y sin el, el GET del panel no tiene
         de donde leer.
+
+  forward_batch_info.py
+    F0/F1  el lambda POR PETICION: `cache_salt: "refusal:<x>"` -> `Req.extra_key` ->
+        una fila de lambda por token, rellenada al final de `ForwardBatch.init_new`.
+        Es lo que permite servir DOS alias (censurado y ablado) sobre UN pod sin
+        tocar el dial global. El aislamiento del prefix cache ya lo da SGLang: ese
+        mismo `extra_key` entra en la clave del radix cache.
 
   http_server.py
     H0  `/admin/refusal_lambda` (GET y POST), la MISMA superficie que servia vLLM.
@@ -429,6 +436,63 @@ async def post_refusal_lambda(request: Request):
     )
 
 
+def patch_forward_batch(site: Path) -> None:
+    """F0/F1: el lambda POR PETICION, que es lo que permite DOS alias sobre UN pod.
+
+    El sello viaja en `cache_salt` y SGLang ya lo lleva hasta `Req.extra_key`
+    (`entrypoints/openai/serving_base.py:_compute_extra_key`) y hasta la clave del
+    radix cache. O sea que el aislamiento de prefijos —que es obligatorio, porque el
+    KV depende de lambda— sale de serie y no hay que programarlo.
+
+    Lo unico que falta es que el forward vea una fila de lambda por token. Se rellena
+    al final de `ForwardBatch.init_new`, que corre una vez por paso y SIEMPRE fuera
+    del grafo; en replay no corre Python, pero el grafo lee la MEMORIA del buffer, que
+    es justo lo que acabamos de escribir.
+    """
+    p = site / "srt/model_executor/forward_batch_info.py"
+
+    replace(
+        p,
+        """from sglang.srt.utils.common import ceil_align, is_pin_memory_available
+""",
+        """from sglang.srt.utils.common import ceil_align, is_pin_memory_available
+
+from sglang.srt import refusal_projection as _refusal
+""",
+    )
+
+    replace(
+        p,
+        """        if (
+            getattr(model_runner, "dcp_size", 1) > 1
+            and ret.out_cache_loc is not None
+            and is_hip()
+        ):
+            ret.dcp_kv_mask = (
+                ret.positions % model_runner.dcp_size == model_runner.dcp_rank
+            )
+
+        return ret
+""",
+        """        if (
+            getattr(model_runner, "dcp_size", 1) > 1
+            and ret.out_cache_loc is not None
+            and is_hip()
+        ):
+            ret.dcp_kv_mask = (
+                ret.positions % model_runner.dcp_size == model_runner.dcp_rank
+            )
+
+        # rank1-refusal: una fila de lambda por token para ESTE paso. Va al final, con
+        # el layout ya resuelto, y fuera del grafo. Es fail-SAFE: si el layout no
+        # cuadra, el lote entero usa el lambda global (nunca el de otra peticion).
+        _refusal.fill_batch(batch, ret)
+
+        return ret
+""",
+    )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--site", type=Path, default=Path("/sgl-workspace/sglang/python/sglang"))
@@ -440,7 +504,8 @@ def main() -> None:
     patch_mlp(args.site)
     patch_scheduler(args.site)
     patch_http_server(args.site)
-    print("[qwen38-27b-rank1] parche aplicado: 12 anclas + payload (target; drafter no)")
+    patch_forward_batch(args.site)
+    print("[qwen38-27b-rank1] parche aplicado: 14 anclas + payload (target; drafter no)")
 
 
 if __name__ == "__main__":
