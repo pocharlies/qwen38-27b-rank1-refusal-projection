@@ -1,0 +1,149 @@
+# sparkrun recipe — Qwen3.8-27B NVFP4 + DSpark (SGLang), con el dial de refusal
+#
+#   sparkrun run qwen38-27b-sglang-dspark-refusal-dial.yaml
+#
+# Segundo runtime del dial, alternativo al de vLLM+MTP. Mismo pack de 128
+# direcciones rank-1 en /opt/refusal/refusal_dirs_qwen38.safetensors, mismo
+# significado de lambda, pero sobre el motor SGLang de la receta pública
+# MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark con su decodificador especulativo DSpark.
+#
+#   curl -XPOST localhost:8888/admin/refusal_lambda \
+#     -H 'Content-Type: application/json' -d '{"lambda":1}'   # ablated
+#   curl -XPOST localhost:8888/admin/refusal_lambda -d '{"lambda":0}' # base intacto
+#
+# POR QUE DSpark y no MTP (medido en GB10 compartido, single stream, T=0):
+#   codigo (LRUCache+test): vLLM+MTP 26,0 tok/s -> SGLang+DSpark 56,1  (2,2x)
+#   prosa  (ensayo):        21,3 -> 18,0 (-16%)
+# DSpark gana en codigo/agentes/tools y pierde algo en texto largo — el trade-off
+# que reporta el propio autor de la receta. Coste de la ablacion: CERO en codigo
+# (56,2 vs 56,0), -4% en prosa; el drafter DSpark no va ablado.
+#
+# LAMBDA POR PETICION (extra sobre vLLM): con `cache_salt: "refusal:1.0"` en la
+# peticion sirves el alias normal (censurado) y el ablado desde el MISMO proceso
+# sin tocar el dial global. SGLang mete el cache_salt en la clave del radix cache,
+# asi que el KV de los dos no se mezcla. Verificado en vivo.
+#
+# ── LO QUE TIENES QUE ADAPTAR TU (serass) ──────────────────────────────────────
+#  1. `container:` — construye la imagen desde runtime/sglang-dspark/Dockerfile de
+#     este repo (parte de la base PUBLICA lmsysorg/sglang:qwen38-27b, todo COPY +
+#     un patch de 14 anclas, cross-buildea a arm64 sin QEMU). PERO neutraliza el
+#     ENTRYPOINT como hiciste con la de vLLM, o SparkRun no puede meter su
+#     bootstrap. Una linea al final de tu Dockerfile.qwen38-sglang:
+#         FROM qwen38-sglang-rank1:local
+#         ENTRYPOINT []
+#  2. `container_args` — monta tus snapshots locales. Son DOS: el target y el
+#     drafter DSpark. Ajusta las rutas a tu ~/.cache/huggingface.
+#  3. `runtime:` — lo he dejado en `sglang` a ojo; NO se si tu sparkrun lo
+#     reconoce (la spec la tienes tu). Si no, el `command:` de abajo es la fuente
+#     de verdad y el health-check de SparkRun sobre /v1/models funciona igual que
+#     con vLLM — SGLang sirve ese endpoint. Dime y lo dejamos como tu spec pida.
+#  4. `served_model_name` — SGLang solo admite UNO (en vLLM eran varios). Sirve
+#     `qwen38-27b`; si pides `tooling` u otro alias, SGLang NO valida el campo
+#     `model`, asi que igual contesta.
+
+model: RadixArk/Qwen3.8-27B-NVFP4-BF16-LMHead
+#model_revision: 009632fef96dd349150baa780c984e62e70e91fe
+
+# Los DOS checkpoints montados como volumen (target + drafter DSpark). Ajusta las
+# rutas a las tuyas; el drafter es ~3,7 GB.
+container_args:
+  - "-v"
+  - "/home/serass/.cache/huggingface/hub/models--RadixArk--Qwen3.8-27B-NVFP4-BF16-LMHead/snapshots/009632fef96dd349150baa780c984e62e70e91fe:/models/qwen38-27b-target"
+  - "-v"
+  - "/home/serass/.cache/huggingface/hub/models--RadixArk--Qwen3.8-27B-DSpark/snapshots/b3c9910194dc7ae53fea3d95a1959b654f495416:/models/qwen38-27b-dspark"
+
+runtime: sglang
+min_nodes: 1
+max_nodes: 1
+
+# Imagen derivada de runtime/sglang-dspark/Dockerfile con ENTRYPOINT neutralizado
+# (ver nota 1 arriba). Todo COPY + patch por anclas: si una version futura de la
+# base mueve un ancla, el build MUERE en vez de servir a medio ablar.
+container: qwen38-sglang-rank1-serass:20260829
+executor: docker
+
+executor_config:
+  user: "0:0"
+
+metadata:
+  description: >-
+    Qwen3.8-27B NVFP4 + DSpark (SGLang) con proyeccion rank-1 de refusal en
+    runtime. Dial global por /admin/refusal_lambda y por peticion via cache_salt.
+  maintainer: serass
+  model_params: 27B
+  model_dtype: nvfp4
+  kv_dtype: fp8
+
+defaults:
+  # 8000 lo ocupa AgentBridge en tu host; 8888 como las demas recetas.
+  port: 8888
+  host: 0.0.0.0
+  tensor_parallel: 1
+  served_model_name: qwen38-27b
+  context_length: 262144
+  max_num_seqs: 4
+  # DSpark usa 0.90 en la receta MiaAI-Lab (Spark dedicado). Si compartes GB10 con
+  # ComfyUI, bajalo: en unificada un OOM es del NODO, no del proceso.
+  mem_fraction_static: 0.90
+  chunked_prefill_size: 8192
+
+env:
+  PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+  HF_HUB_OFFLINE: "1"
+  # El dial rank-1. Sin SGLANG_REFUSAL_DIRS el hook NI se construye y la imagen es
+  # la SGLang de la receta, sin tocar. ARRANCA EN 0 (censurado); ponlo a "1" si
+  # quieres que arranque ablado como tu recipe de vLLM.
+  SGLANG_REFUSAL_DIRS: /opt/refusal/refusal_dirs_qwen38.safetensors
+  SGLANG_REFUSAL_LAMBDA: "0"
+
+command: |
+  python3 -m sglang.launch_server \
+      --model-path /models/qwen38-27b-target \
+      --served-model-name {served_model_name} \
+      --host {host} \
+      --port {port} \
+      --tp {tensor_parallel} \
+      --context-length {context_length} \
+      --trust-remote-code \
+      --attention-backend flashinfer \
+      --kv-cache-dtype fp8_e4m3 \
+      --mamba-ssm-dtype bfloat16 \
+      --mamba-full-memory-ratio 4.21 \
+      --mamba-radix-cache-strategy extra_buffer_lazy \
+      --max-running-requests {max_num_seqs} \
+      --chunked-prefill-size {chunked_prefill_size} \
+      --disable-prefill-cuda-graph \
+      --speculative-algorithm DSPARK \
+      --speculative-draft-model-path /models/qwen38-27b-dspark \
+      --speculative-draft-model-quantization unquant \
+      --speculative-dspark-block-size 7 \
+      --speculative-num-draft-tokens 8 \
+      --mem-fraction-static {mem_fraction_static} \
+      --enable-torch-compile \
+      --torch-compile-max-bs 4 \
+      --cuda-graph-max-bs-decode 4 \
+      --num-continuous-decode-steps 2 \
+      --reasoning-parser qwen3 \
+      --tool-call-parser qwen3_coder \
+      --sampling-defaults model \
+      --enable-metrics \
+      --enable-cache-report \
+      --default-chat-template-kwargs '{"enable_thinking":false}'
+
+# ── Dos cosas que a mi me mordieron en Kubernetes, por si tu docker las hereda ──
+#
+# a) DRAFTER POR RUTA, no por repo-id. `speculative_hook.py` resuelve el config del
+#    drafter SIN pasarle la revision, o sea contra refs/main; y snapshot_download
+#    con revision fijada NO escribe refs/main. Con HF_HUB_OFFLINE=1 eso mata el
+#    arranque AL PARSEAR argumentos, con un traceback que apunta a huggingface_hub
+#    y no dice "drafter". Por eso arriba el draft va por /models/..., no por id.
+#    Si tu no pones HF_HUB_OFFLINE, el id de repo tambien vale.
+#
+# b) mm-feature-transport. SGLang resuelve solo el transporte multimodal a
+#    `cuda_ipc`, que usa pidfd_getfd -> necesita PTRACE_MODE_ATTACH. En mi pod k8s
+#    (sin SYS_PTRACE) el scheduler moria en el warmup con
+#      RuntimeError: pidfd_getfd: Operation not permitted
+#    y el sintoma era un cuelgue de 10 min -> warmup TimeoutError, sin mencionar
+#    multimodal. Con `executor: docker` y user 0:0 seguramente NO te pasa. Si te
+#    pasa, anade `--mm-feature-transport cpu` al command (las features de imagen
+#    van por CPU; el coste es bajo en un asiento de texto/tools).
