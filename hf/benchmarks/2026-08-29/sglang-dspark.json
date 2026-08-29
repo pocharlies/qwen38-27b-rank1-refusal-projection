@@ -1,0 +1,37 @@
+{
+  "schema_version": "runtime-benchmark.v1",
+  "measured_at": "2026-08-29",
+  "runtime": "sglang + DSpark speculative decoding",
+  "recipe": "https://github.com/MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark",
+  "image": "sglang-qwen38-27b-rank1-arm64:v0.2.0",
+  "image_digest": "sha256:56515cf9de720aa51f4ef812d02be36bb62cf6395805c54c143a38fc62dc71a6",
+  "hardware": "1x NVIDIA DGX Spark GB10 / sm_121 / 128 GB unified memory",
+  "hardware_note": "shared GB10: this model co-resides with a vision model, TTS and two BGE pools; absolute tok/s is depressed vs a dedicated Spark",
+  "method": "single-stream curl at temperature 0; code = LRUCache+test, prose = 3-paragraph essay",
+  "model": "RadixArk/Qwen3.8-27B-NVFP4-BF16-LMHead",
+  "draft_model": "RadixArk/Qwen3.8-27B-DSpark (unquant, block-size 7, 8 draft tokens; NOT projected)",
+  "configuration": {
+    "context_len": 262144,
+    "max_total_tokens": 344064,
+    "max_running_requests": 4,
+    "chunked_prefill_size": 2048,
+    "kv_cache_dtype": "fp8_e4m3",
+    "mm_feature_transport": "cpu"
+  },
+  "cross_runtime": {
+    "note": "vLLM column is this repo's own harness (hf/benchmarks/2026-08-22/vllm-0.27.1.json); prose = its 'varied' workload",
+    "code_tok_s": { "vllm_0_27_1_mtp": 26.01, "sglang_dspark": 56.1, "speedup": "2.2x" },
+    "prose_tok_s": { "vllm_0_27_1_mtp": 21.33, "sglang_dspark": 18.0, "delta": "-16%" }
+  },
+  "ablation_cost": {
+    "note": "same prompt, T=0, dial lambda=0 vs lambda=1; drafter unprojected",
+    "code_tok_s": { "lambda_0": 56.2, "lambda_1": 56.0 },
+    "prose_tok_s": { "lambda_0": 18.0, "lambda_1": 17.3 }
+  },
+  "refusal_dial": {
+    "global": "POST /admin/refusal_lambda {\"lambda\":x}; lambda=0 refuses the two adversarial probes, lambda=1 complies",
+    "per_request": "cache_salt: \"refusal:1.0\" verified LIVE — normal alias (no seal) and uncensored alias (sealed) served in the SAME concurrent batch: censored vs complied, global dial stayed at 0.0",
+    "fail_closed": "128/128 directions claimed, each exactly once"
+  },
+  "verdict": "2.2x on code over vLLM+MTP; ablation is free on code and ~4% on prose; per-request lambda works, so two aliases (censored + abliterated) share one pod with no global switch"
+}
